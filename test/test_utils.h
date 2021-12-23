@@ -51,6 +51,7 @@ namespace detail {
 namespace test_utils {
 
 	class mock_buffer_factory;
+	class mock_host_object_factory;
 
 	template <int Dims>
 	class mock_buffer {
@@ -72,6 +73,24 @@ namespace test_utils {
 		cl::sycl::range<Dims> size;
 
 		mock_buffer(detail::buffer_id id, cl::sycl::range<Dims> size) : id(id), size(size) {}
+	};
+
+	class mock_host_object {
+	  public:
+		void add_side_effect(handler& cgh, const access_mode mode) {
+			if(detail::is_prepass_handler(cgh)) {
+				auto& prepass_cgh = static_cast<detail::prepass_handler&>(cgh);
+				prepass_cgh.add_requirement(id, mode);
+			}
+		}
+
+	  private:
+		friend class mock_host_object_factory;
+
+		detail::host_object_id id;
+
+	  public:
+		explicit mock_host_object(detail::host_object_id id) : id(id) {}
 	};
 
 	class cdag_inspector {
@@ -182,8 +201,8 @@ namespace test_utils {
 
 	class mock_buffer_factory {
 	  public:
-		mock_buffer_factory(detail::task_manager* tm = nullptr, detail::graph_generator* ggen = nullptr) : task_mngr(tm), ggen(ggen) {}
-		mock_buffer_factory(cdag_test_context& ctx) : task_mngr(&ctx.get_task_manager()), ggen(&ctx.get_graph_generator()) {}
+		explicit mock_buffer_factory(detail::task_manager* tm = nullptr, detail::graph_generator* ggen = nullptr) : task_mngr(tm), ggen(ggen) {}
+		explicit mock_buffer_factory(cdag_test_context& ctx) : task_mngr(&ctx.get_task_manager()), ggen(&ctx.get_graph_generator()) {}
 
 		template <int Dims>
 		mock_buffer<Dims> create_buffer(cl::sycl::range<Dims> size, bool mark_as_host_initialized = false) {
@@ -198,6 +217,14 @@ namespace test_utils {
 		detail::task_manager* task_mngr;
 		detail::graph_generator* ggen;
 		detail::buffer_id next_buffer_id = 0;
+	};
+
+	class mock_host_object_factory {
+	  public:
+		mock_host_object create_host_object() { return mock_host_object{next_id++}; }
+
+	  private:
+		detail::host_object_id next_id = 0;
 	};
 
 	template <typename KernelName = class test_task, typename CGF, int KernelDims = 2>
