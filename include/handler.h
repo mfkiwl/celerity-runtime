@@ -287,7 +287,7 @@ namespace detail {
 			access_map.add_access(bid, std::move(rm));
 		}
 
-		void add_requirement(host_object_id hoid, experimental::side_effect_order order) {
+		void add_requirement(const host_object_id hoid, const experimental::side_effect_order order) {
 			assert(task == nullptr);
 			side_effect_map.add_side_effect(hoid, order);
 		}
@@ -305,7 +305,7 @@ namespace detail {
 
 		void create_device_compute_task(int dimensions, range<3> global_range, id<3> global_offset, range<3> granularity, std::string debug_name) {
 			assert(task == nullptr);
-			if(!side_effect_map.empty()) { throw std::runtime_error{"Side effects cannot be used with device kernels"}; }
+			if(!side_effect_map.empty()) { throw std::runtime_error{"Side effects cannot be used in device kernels"}; }
 			task = detail::task::make_device_compute(
 			    tid, dimensions, global_range, global_offset, granularity, std::move(cgf), std::move(access_map), std::move(reductions), std::move(debug_name));
 		}
@@ -334,7 +334,7 @@ namespace detail {
 		task_id tid;
 		std::unique_ptr<command_group_storage_base> cgf;
 		buffer_access_map access_map;
-		host_object_side_effect_map side_effect_map;
+		side_effect_map side_effect_map;
 		std::vector<reduction_id> reductions;
 		std::unique_ptr<class task> task = nullptr;
 		size_t num_collective_nodes;
