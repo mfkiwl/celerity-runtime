@@ -20,26 +20,19 @@ namespace detail {
 	using task_callback = std::function<void(task_id, task_type)>;
 
 	class task_manager {
+	  private:
 		friend struct task_manager_testspy;
 		using buffer_writers_map = std::unordered_map<buffer_id, region_map<std::optional<task_id>>>;
 
-	  public:
-		task_manager(size_t num_collective_nodes, host_queue* queue, reduction_manager* reduction_mgr);
-
-		virtual ~task_manager() = default;
-
-		template <typename CGF, typename... Hints>
-		task_id create_task(CGF cgf, Hints... hints) {
+		template <typename Factory>
+		task_id create_task_with_factory(Factory&& factory) {
 			task_id tid;
 			task_type type;
 			{
 				std::lock_guard lock(task_mutex);
 				tid = get_new_tid();
 
-				prepass_handler cgh(tid, std::make_unique<command_group_storage<CGF>>(cgf), num_collective_nodes);
-				cgf(cgh);
-
-				task& task_ref = register_task_internal(std::move(cgh).into_task());
+				task& task_ref = register_task_internal(std::invoke(factory, tid));
 				type = task_ref.get_type();
 
 				compute_dependencies(tid);
@@ -49,6 +42,24 @@ namespace detail {
 			invoke_callbacks(tid, type);
 			if(need_new_horizon()) { generate_task_horizon(); }
 			return tid;
+		}
+
+	  public:
+		task_manager(size_t num_collective_nodes, host_queue* queue, reduction_manager* reduction_mgr);
+
+		virtual ~task_manager() = default;
+
+		template <typename CGF, typename... Hints>
+		task_id create_task(CGF cgf, Hints... hints) {
+			return create_task_with_factory([&](task_id tid) {
+				prepass_handler cgh(tid, std::make_unique<command_group_storage<CGF>>(cgf), num_collective_nodes);
+				cgf(cgh);
+				return std::move(cgh).into_task();
+			});
+		}
+
+		task_id create_capture_task(buffer_access_map accesses, side_effect_map side_effects) {
+			return create_task_with_factory([&](task_id tid) { return task::make_capture_task(tid, std::move(accesses), std::move(side_effects)); });
 		}
 
 		/**

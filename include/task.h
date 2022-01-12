@@ -23,6 +23,7 @@ namespace detail {
 		COLLECTIVE,     ///< host task with implicit 1d global size = #ranks and fixed split
 		MASTER_NODE,    ///< zero-dimensional host task
 		HORIZON,        ///< task horizon
+		CAPTURE,
 	};
 
 	enum class execution_target {
@@ -121,7 +122,8 @@ namespace detail {
 			case task_type::HOST_COMPUTE:
 			case task_type::COLLECTIVE:
 			case task_type::MASTER_NODE: return execution_target::HOST;
-			case task_type::HORIZON: return execution_target::NONE;
+			case task_type::HORIZON:
+			case task_type::CAPTURE: return execution_target::NONE;
 			default: assert(!"Unhandled task type"); return execution_target::NONE;
 			}
 		}
@@ -162,6 +164,11 @@ namespace detail {
 			return std::unique_ptr<task>(new task(tid, task_type::HORIZON, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}, {}));
 		}
 
+		static std::unique_ptr<task> make_capture_task(task_id tid, buffer_access_map access_map, side_effect_map side_effect_map) {
+			return std::unique_ptr<task>(
+			    new task(tid, task_type::CAPTURE, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, std::move(access_map), std::move(side_effect_map), {}, {}));
+		}
+
 	  private:
 		task_id tid;
 		task_type type;
@@ -183,7 +190,8 @@ namespace detail {
 		      cgf(std::move(cgf)), access_map(std::move(access_map)), side_effect_map(std::move(side_effect_map)), reductions(std::move(reductions)),
 		      debug_name(std::move(debug_name)) {
 			assert(type == task_type::HOST_COMPUTE || type == task_type::DEVICE_COMPUTE || granularity.size() == 1);
-			assert((type != task_type::HOST_COMPUTE && type != task_type::COLLECTIVE && type != task_type::MASTER_NODE) || side_effect_map.empty());
+			assert((type != task_type::HOST_COMPUTE && type != task_type::COLLECTIVE && type != task_type::MASTER_NODE && type != task_type::CAPTURE)
+			       || side_effect_map.empty());
 		}
 	};
 

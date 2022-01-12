@@ -5,7 +5,7 @@
 const size_t MAT_SIZE = 1024;
 
 template <typename T>
-void set_identity(celerity::distr_queue queue, celerity::buffer<T, 2> mat) {
+void set_identity(celerity::distr_queue& queue, celerity::buffer<T, 2> mat) {
 	queue.submit([=](celerity::handler& cgh) {
 		celerity::accessor dw{mat, cgh, celerity::access::one_to_one{}, celerity::write_only, celerity::no_init};
 		cgh.parallel_for<class set_identity_kernel>(mat.get_range(), [=](celerity::item<2> item) { dw[item] = item[0] == item[1]; });
@@ -13,7 +13,7 @@ void set_identity(celerity::distr_queue queue, celerity::buffer<T, 2> mat) {
 }
 
 template <typename T>
-void multiply(celerity::distr_queue queue, celerity::buffer<T, 2> mat_a, celerity::buffer<T, 2> mat_b, celerity::buffer<T, 2> mat_c) {
+void multiply(celerity::distr_queue& queue, celerity::buffer<T, 2> mat_a, celerity::buffer<T, 2> mat_b, celerity::buffer<T, 2> mat_c) {
 	queue.submit([=](celerity::handler& cgh) {
 		celerity::accessor a{mat_a, cgh, celerity::access::slice<2>(1), celerity::read_only};
 		celerity::accessor b{mat_b, cgh, celerity::access::slice<2>(0), celerity::read_only};
@@ -61,26 +61,27 @@ void multiply(celerity::distr_queue queue, celerity::buffer<T, 2> mat_a, celerit
 }
 
 template <typename T>
-void verify(celerity::distr_queue queue, celerity::buffer<T, 2> mat_a_buf, bool& verification_passed) {
-	// allow_by_ref is safe here as long as the caller of verify() ensures that verification_passed lives until the next synchronization point
-	queue.submit(celerity::allow_by_ref, [=, &verification_passed](celerity::handler& cgh) {
+void verify(celerity::distr_queue& queue, celerity::buffer<T, 2> mat_a_buf, celerity::experimental::host_object<bool> verification) {
+	queue.submit([=](celerity::handler& cgh) {
 		celerity::accessor result{mat_a_buf, cgh, celerity::access::one_to_one{}, celerity::read_only_host_task};
+		celerity::experimental::side_effect passed{verification, cgh};
 
-		cgh.host_task(mat_a_buf.get_range(), [=, &verification_passed](celerity::partition<2> part) {
-			auto sr = part.get_subrange();
-			for(size_t i = sr.offset[0]; i < sr.offset[0] + sr.range[0]; ++i) {
-				for(size_t j = sr.offset[0]; j < sr.offset[0] + sr.range[0]; ++j) {
-					const float received = result[{i, j}];
-					const float expected = i == j;
-					if(expected != received) {
-						fprintf(stderr, "VERIFICATION FAILED for element %zu,%zu: %f (received) != %f (expected)\n", i, j, received, expected);
-						verification_passed = false;
-						break;
+		cgh.host_task(mat_a_buf.get_range(), [=](celerity::partition<2> part) {
+			*passed = [&] {
+				auto sr = part.get_subrange();
+				for(size_t i = sr.offset[0]; i < sr.offset[0] + sr.range[0]; ++i) {
+					for(size_t j = sr.offset[0]; j < sr.offset[0] + sr.range[0]; ++j) {
+						const float received = result[{i, j}];
+						const float expected = i == j;
+						if(expected != received) {
+							fprintf(stderr, "VERIFICATION FAILED for element %zu,%zu: %f (received) != %f (expected)\n", i, j, received, expected);
+							return false;
+						}
 					}
 				}
-				if(!verification_passed) { break; }
-			}
-			if(verification_passed) { printf("VERIFICATION PASSED!\n"); }
+				printf("VERIFICATION PASSED!\n");
+				return true;
+			}();
 		});
 	});
 }
@@ -99,9 +100,9 @@ int main() {
 	multiply(queue, mat_a_buf, mat_b_buf, mat_c_buf);
 	multiply(queue, mat_b_buf, mat_c_buf, mat_a_buf);
 
-	bool verification_passed = true;
-	verify(queue, mat_a_buf, verification_passed);
-	queue.slow_full_sync(); // Wait for verification_passed to become available
+	celerity::experimental::host_object<bool> verification;
+	verify(queue, mat_a_buf, verification);
 
-	return verification_passed ? EXIT_SUCCESS : EXIT_FAILURE;
+	const auto passed = celerity::experimental::drain(std::move(queue), celerity::experimental::capture{verification});
+	return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

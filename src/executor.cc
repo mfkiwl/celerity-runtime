@@ -177,10 +177,10 @@ namespace detail {
 			if(!task_mngr.has_task(data.tid)) { return false; }
 
 			auto tsk = task_mngr.get_task(data.tid);
-			if(tsk->get_execution_target() == execution_target::HOST) {
-				create_job<host_execute_job>(pkg, dependencies, h_queue, task_mngr, buffer_mngr);
-			} else {
-				create_job<device_execute_job>(pkg, dependencies, d_queue, task_mngr, buffer_mngr, reduction_mngr, local_nid);
+			switch(tsk->get_execution_target()) {
+			case execution_target::HOST: create_job<host_execute_job>(pkg, dependencies, h_queue, task_mngr, buffer_mngr); break;
+			case execution_target::DEVICE: create_job<device_execute_job>(pkg, dependencies, d_queue, task_mngr, buffer_mngr, reduction_mngr, local_nid); break;
+			case execution_target::NONE: break;
 			}
 			break;
 		}

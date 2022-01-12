@@ -13,8 +13,18 @@ namespace detail {
 	template <typename CGF>
 	constexpr bool is_safe_cgf = std::is_standard_layout<CGF>::value;
 
-	struct capture_exfiltrator {
+	struct capture_inspector {
 	  public:
+		template <typename Capture>
+		static void record_requirements(const Capture& cap, detail::buffer_access_map& accesses, detail::side_effect_map& side_effects) {
+			cap.record_requirements(accesses, side_effects);
+		}
+
+		template <typename Captures>
+		static void record_requirements_on_tuple(const Captures& caps, detail::buffer_access_map& accesses, detail::side_effect_map& side_effects) {
+			record_requirements_on_tuple(caps, accesses, side_effects, std::make_index_sequence<std::tuple_size_v<Captures>>{});
+		}
+
 		template <typename Capture>
 		static auto exfiltrate_by_copy(const Capture& cap) {
 			return cap.exfiltrate_by_copy();
@@ -37,6 +47,12 @@ namespace detail {
 
 	  private:
 		template <typename Captures, size_t... Is>
+		static void record_requirements_on_tuple(
+		    const Captures& caps, detail::buffer_access_map& accesses, detail::side_effect_map& side_effects, std::index_sequence<Is...>) {
+			(std::get<Is>(caps).record_requirements(accesses, side_effects), ...);
+		}
+
+		template <typename Captures, size_t... Is>
 		static auto exfiltrate_tuple_by_copy(const Captures& caps, std::index_sequence<Is...>) {
 			return std::tuple{std::get<Is>(caps).exfiltrate_by_copy()...};
 		}
@@ -46,6 +62,8 @@ namespace detail {
 			return std::tuple{std::get<Is>(caps).exfiltrate_by_move()...};
 		}
 	};
+
+	struct queue_inspector;
 
 } // namespace detail
 
@@ -71,8 +89,6 @@ namespace experimental {
 		const T* get_pointer() const { return static_cast<T>(data.get_pointer()); }
 
 	  private:
-		friend class detail::capture_exfiltrator;
-
 		detail::raw_buffer_data data;
 
 		explicit buffer_data(detail::raw_buffer_data raw) : data{std::move(raw)} { assert(data.get_size() / data.get_range().size() == sizeof(T)); }
@@ -83,22 +99,30 @@ namespace experimental {
 	  public:
 		using value_type = buffer_data<T, Dims>;
 
-		explicit capture(const buffer<T, Dims>& buf) : bid{detail::get_buffer_id(buf)}, sr{{{}, buf.get_range()}} {}
-		explicit capture(const buffer<T, Dims>& buf, const subrange<Dims>& sr) : bid{detail::get_buffer_id(buf)}, sr{sr} {}
+		explicit capture(buffer<T, Dims> buf) : buffer{std::move(buf)}, sr{{{}, buffer.get_range()}} {}
+		explicit capture(buffer<T, Dims> buf, const subrange<Dims>& sr) : buffer{std::move(buf)}, sr{sr} {}
 
 	  private:
-		friend class detail::capture_exfiltrator;
+		friend struct detail::capture_inspector;
 
-		detail::buffer_id bid;
+		buffer<T, Dims> buffer;
 		subrange<Dims> sr;
+
+		void record_requirements(detail::buffer_access_map& accesses, detail::side_effect_map&) const {
+			accesses.add_access(detail::get_buffer_id(buffer),
+			    std::make_unique<detail::range_mapper<Dims, celerity::access::fixed<Dims>>>(sr, access_mode::read, buffer.get_range()));
+		}
 
 		value_type exfiltrate_by_copy() const {
 			auto& bm = detail::runtime::get_instance().get_buffer_manager();
-			return value_type{bm.get_buffer_data(bid, sr.offset, sr.range)};
+			return value_type{bm.get_buffer_data(detail::get_buffer_id(buffer), sr.offset, sr.range)};
 		}
 
 		value_type exfiltrate_by_move() const { return exfiltrate_by_copy(); }
 	};
+
+	template <typename T, int Dims>
+	capture(buffer<T, Dims>) -> capture<buffer<T, Dims>>;
 
 	template <typename T>
 	class capture<host_object<T>> {
@@ -110,14 +134,21 @@ namespace experimental {
 		explicit capture(host_object<T> ho) : ho{std::move(ho)} {}
 
 	  private:
-		friend class celerity::distr_queue;
+		friend struct detail::capture_inspector;
 
 		host_object<T> ho;
+
+		void record_requirements(detail::buffer_access_map&, detail::side_effect_map& side_effects) const {
+			side_effects.add_side_effect(ho.get_id(), side_effect_order::sequential);
+		}
 
 		value_type exfiltrate_by_copy() const { return value_type{std::as_const(*ho.get_object())}; }
 
 		value_type exfiltrate_by_move() const { return value_type{std::move(*ho.get_object())}; }
 	};
+
+	template <typename T>
+	capture(host_object<T>) -> capture<host_object<T>>;
 
 } // namespace experimental
 
@@ -132,7 +163,9 @@ class distr_queue {
 	distr_queue(const distr_queue&) = delete;
 	distr_queue& operator=(const distr_queue&) = delete;
 
-	~distr_queue() { detail::runtime::get_instance().shutdown(); }
+	~distr_queue() {
+		if(!drained) { detail::runtime::get_instance().shutdown(); }
+	}
 
 	/**
 	 * Submits a command group to the queue.
@@ -144,7 +177,7 @@ class distr_queue {
 	 */
 	template <typename CGF>
 	void submit(allow_by_ref_t, CGF cgf) {
-		// (Note while this function could be made static, it must not be! Otherwise we can't be sure the runtime has been initialized.)
+		check_not_drained();
 		detail::runtime::get_instance().get_task_manager().create_task(std::move(cgf));
 	}
 
@@ -169,49 +202,86 @@ class distr_queue {
 	 * In production, it should only be used at very coarse granularity (second scale).
 	 * @warning { This is very slow, as it drains all queues and synchronizes accross the entire cluster. }
 	 */
-	void slow_full_sync() { detail::runtime::get_instance().sync(); }
+	void slow_full_sync() {
+		check_not_drained();
+		detail::runtime::get_instance().sync();
+	}
 
 	template <typename T>
 	typename experimental::capture<T>::value_type slow_full_sync(const experimental::capture<T>& cap) {
-		// TODO schedule transfers
-		slow_full_sync();
-		return detail::capture_exfiltrator::exfiltrate_by_copy(cap);
+		check_not_drained();
+		detail::buffer_access_map accesses;
+		detail::side_effect_map side_effects;
+		detail::capture_inspector::record_requirements(cap, accesses, side_effects);
+		detail::runtime::get_instance().get_task_manager().create_capture_task(std::move(accesses), std::move(side_effects));
+		detail::runtime::get_instance().sync();
+		return detail::capture_inspector::exfiltrate_by_copy(cap);
 	}
 
 	template <typename... Ts>
 	std::tuple<typename experimental::capture<Ts>::value_type...> slow_full_sync(const std::tuple<experimental::capture<Ts>...>& caps) {
-		// TODO schedule transfers
-		slow_full_sync();
-		return detail::capture_exfiltrator::exfiltrate_tuple_by_copy(caps);
+		check_not_drained();
+		detail::buffer_access_map accesses;
+		detail::side_effect_map side_effects;
+		detail::capture_inspector::record_requirements_on_tuple(caps, accesses, side_effects);
+		detail::runtime::get_instance().get_task_manager().create_capture_task(std::move(accesses), std::move(side_effects));
+		detail::runtime::get_instance().sync();
+		return detail::capture_inspector::exfiltrate_tuple_by_copy(caps);
 	}
 
   private:
+	friend struct detail::queue_inspector;
+
 	void init(cl::sycl::device* user_device) {
 		if(!detail::runtime::is_initialized()) { detail::runtime::init(nullptr, nullptr, user_device); }
 		try {
 			detail::runtime::get_instance().startup();
-		} catch(detail::runtime_already_started_error&) {
-			throw std::runtime_error("Only one celerity::distr_queue can be created per process (but it can be copied!)");
-		}
+		} catch(detail::runtime_already_started_error&) { throw std::runtime_error("Only one celerity::distr_queue can be created per process"); }
 	}
+
+	void check_not_drained() const {
+		if(drained) { throw std::runtime_error("distr_queue has already been drained"); }
+	}
+
+	void drain() {
+		check_not_drained();
+		detail::runtime::get_instance().shutdown();
+		drained = true;
+	}
+
+	bool drained = false;
 };
+
+namespace detail {
+
+	struct queue_inspector {
+		static void drain(distr_queue& q) { q.drain(); }
+	};
+
+} // namespace detail
 
 namespace experimental {
 
-	void drain(distr_queue&&) { detail::runtime::get_instance().shutdown(); }
+	inline void drain(distr_queue&& q) { detail::queue_inspector::drain(q); }
 
 	template <typename T>
 	typename experimental::capture<T>::value_type drain(distr_queue&& q, const experimental::capture<T>& cap) {
-		// TODO schedule transfers
-		drain(std::move(q));
-		return detail::capture_exfiltrator::exfiltrate_by_move(cap);
+		detail::buffer_access_map accesses;
+		detail::side_effect_map side_effects;
+		detail::capture_inspector::record_requirements(cap, accesses, side_effects);
+		detail::runtime::get_instance().get_task_manager().create_capture_task(std::move(accesses), std::move(side_effects));
+		detail::queue_inspector::drain(q);
+		return detail::capture_inspector::exfiltrate_by_move(cap);
 	}
 
 	template <typename... Ts>
 	std::tuple<typename experimental::capture<Ts>::value_type...> drain(distr_queue&& q, const std::tuple<experimental::capture<Ts>...>& caps) {
-		// TODO schedule transfers
-		drain(std::move(q));
-		return detail::capture_exfiltrator::exfiltrate_tuple_by_move(caps);
+		detail::buffer_access_map accesses;
+		detail::side_effect_map side_effects;
+		detail::capture_inspector::record_requirements_on_tuple(caps, accesses, side_effects);
+		detail::runtime::get_instance().get_task_manager().create_capture_task(std::move(accesses), std::move(side_effects));
+		detail::queue_inspector::drain(q);
+		return detail::capture_inspector::exfiltrate_tuple_by_move(caps);
 	}
 
 } // namespace experimental
