@@ -43,12 +43,20 @@ namespace detail {
 
 		auto tsk = task_mngr.get_task(tid);
 
-		if(tsk->get_type() == task_type::HORIZON) {
-			generate_horizon(tid);
-			return;
-		}
+		switch(tsk->get_type()) {
+		case task_type::HORIZON: generate_horizon(tid); return;
 
-		if(tsk->get_type() == task_type::COLLECTIVE) {
+		case task_type::CAPTURE:
+			for(size_t nid = 0; nid < num_nodes; ++nid) {
+				// TODO the ranges here are pretty meaningless, should not be a task_command at all
+				const auto offset = cl::sycl::id<1>{nid};
+				const auto range = cl::sycl::range<1>{1};
+				const auto sr = subrange_cast<3>(subrange<1>{offset, range});
+				cdag.create<task_command>(nid, tid, sr);
+			}
+			break;
+
+		case task_type::COLLECTIVE:
 			for(size_t nid = 0; nid < num_nodes; ++nid) {
 				auto offset = cl::sycl::id<1>{nid};
 				auto range = cl::sycl::range<1>{1};
@@ -65,9 +73,9 @@ namespace detail {
 				}
 				last_collective_commands.emplace(cgid, cmd->get_cid());
 			}
-		} else {
-			const auto sr = subrange<3>{tsk->get_global_offset(), tsk->get_global_size()};
-			cdag.create<task_command>(0, tid, sr);
+			break;
+
+		default: const auto sr = subrange<3>{tsk->get_global_offset(), tsk->get_global_size()}; cdag.create<task_command>(0, tid, sr);
 		}
 
 		for(auto& t : transformers) {

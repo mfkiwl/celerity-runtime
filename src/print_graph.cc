@@ -28,6 +28,7 @@ namespace detail {
 		case task_type::COLLECTIVE: return fmt::format("Task {} (collective #{})", tsk->get_id(), static_cast<size_t>(tsk->get_collective_group_id()));
 		case task_type::MASTER_NODE: return fmt::format("Task {} (master-node)", tsk->get_id());
 		case task_type::HORIZON: return fmt::format("Task {} (horizon)", tsk->get_id());
+		case task_type::CAPTURE: return fmt::format("Task {} (capture)", tsk->get_id());
 		default: assert(false); return fmt::format("Task {} (unknown)", tsk->get_id());
 		}
 	}
