@@ -297,17 +297,15 @@ namespace detail {
 			reductions.push_back(rid);
 		}
 
-		void create_host_compute_task(int dimensions, range<3> global_range, id<3> global_offset, range<3> granularity) {
+		void create_host_compute_task(task_geometry geometry) {
 			assert(task == nullptr);
-			task = detail::task::make_host_compute(tid, dimensions, global_range, global_offset, granularity, std::move(cgf), std::move(access_map),
-			    std::move(side_effect_map), std::move(reductions));
+			task = detail::task::make_host_compute(tid, geometry, std::move(cgf), std::move(access_map), std::move(side_effect_map), std::move(reductions));
 		}
 
-		void create_device_compute_task(int dimensions, range<3> global_range, id<3> global_offset, range<3> granularity, std::string debug_name) {
+		void create_device_compute_task(task_geometry geometry, std::string debug_name) {
 			assert(task == nullptr);
 			if(!side_effect_map.empty()) { throw std::runtime_error{"Side effects cannot be used in device kernels"}; }
-			task = detail::task::make_device_compute(
-			    tid, dimensions, global_range, global_offset, granularity, std::move(cgf), std::move(access_map), std::move(reductions), std::move(debug_name));
+			task = detail::task::make_device_compute(tid, geometry, std::move(cgf), std::move(access_map), std::move(reductions), std::move(debug_name));
 		}
 
 		void create_collective_task(collective_group_id cgid) {
@@ -591,8 +589,8 @@ void handler::parallel_for_kernel_and_reductions(range<Dims> global_range, id<Di
 				granularity[d] = local_range[d];
 			}
 		}
-		return dynamic_cast<detail::prepass_handler&>(*this).create_device_compute_task(
-		    Dims, detail::range_cast<3>(global_range), detail::id_cast<3>(global_offset), granularity, detail::kernel_debug_name<KernelName>());
+		const detail::task_geometry geometry{Dims, detail::range_cast<3>(global_range), detail::id_cast<3>(global_offset), granularity};
+		return dynamic_cast<detail::prepass_handler&>(*this).create_device_compute_task(geometry, detail::kernel_debug_name<KernelName>());
 	}
 
 	auto& device_handler = dynamic_cast<detail::live_pass_device_handler&>(*this);
@@ -638,8 +636,8 @@ void handler::host_task(experimental::collective_tag tag, Functor kernel) {
 template <int Dims, typename Functor>
 void handler::host_task(range<Dims> global_range, id<Dims> global_offset, Functor kernel) {
 	if(is_prepass()) {
-		dynamic_cast<detail::prepass_handler&>(*this).create_host_compute_task(
-		    Dims, detail::range_cast<3>(global_range), detail::id_cast<3>(global_offset), {1, 1, 1});
+		const detail::task_geometry geometry{Dims, detail::range_cast<3>(global_range), detail::id_cast<3>(global_offset), {1, 1, 1}};
+		dynamic_cast<detail::prepass_handler&>(*this).create_host_compute_task(geometry);
 	} else {
 		dynamic_cast<detail::live_pass_host_handler&>(*this).schedule<Dims>(kernel);
 	}
