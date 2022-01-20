@@ -72,7 +72,11 @@ class distr_queue {
 	 * In production, it should only be used at very coarse granularity (second scale).
 	 * @warning { This is very slow, as it drains all queues and synchronizes accross the entire cluster. }
 	 */
-	void slow_full_sync() { detail::runtime::get_instance().sync(); }
+	void slow_full_sync() {
+		auto& tm = detail::runtime::get_instance().get_task_manager();
+		const auto barrier_tid = tm.create_barrier_task();
+		tm.wait_on_barrier(barrier_tid);
+	}
 
   private:
 	std::shared_ptr<detail::distr_queue_tracker> tracker;
