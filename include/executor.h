@@ -88,7 +88,7 @@ namespace detail {
 		template <typename Job, typename... Args>
 		void create_job(const command_pkg& pkg, const std::vector<command_id>& dependencies, Args&&... args) {
 			auto logger = execution_logger->create_context({{"job", std::to_string(pkg.cid)}});
-			if(pkg.cmd == command_type::CHECKPOINT) { logger = logger->create_context({{"task", std::to_string(std::get<checkpoint_data>(pkg.data).tid)}}); }
+			if(pkg.cmd == command_type::MILESTONE) { logger = logger->create_context({{"task", std::to_string(std::get<milestone_data>(pkg.data).tid)}}); }
 			if(pkg.cmd == command_type::EXECUTION) { logger = logger->create_context({{"task", std::to_string(std::get<execution_data>(pkg.data).tid)}}); }
 			jobs[pkg.cid] = {std::make_unique<Job>(pkg, logger, std::forward<Args>(args)...), pkg.cmd, {}, 0};
 

@@ -44,7 +44,7 @@ namespace detail {
 
 				compute_dependencies(tid);
 				if(queue) queue->require_collective_group(task_ref.get_collective_group_id());
-				clean_up_pre_checkpoint_tasks();
+				clean_up_pre_milestone_tasks();
 			}
 			invoke_callbacks(tid, type);
 			if(need_new_horizon()) { generate_task_horizon(); }
@@ -87,9 +87,9 @@ namespace detail {
 		}
 
 		/**
-		 * @brief Notifies the task manager that the given horizon has been executed (used for task deletion)
+		 * @brief Notifies the task manager that the given horizon or barrier has been executed (used for task deletion)
 		 */
-		void notify_checkpoint_reached(task_id tid, checkpoint_type cpt);
+		void notify_milestone_reached(task_id tid, milestone_type type);
 
 		/**
 		 * Returns the number of tasks created during the lifetime of the task_manager,
@@ -134,10 +134,10 @@ namespace detail {
 		// This only (potentially) grows when adding dependencies,
 		// it never shrinks and does not take into account later changes further up in the dependency chain
 		int max_pseudo_critical_path_length = 0;
-		int current_checkpoint_critical_path_length = 0;
+		int current_milestone_critical_path_length = 0;
 
 		// The latest horizon task created. Will be applied as last writer once the next horizon is created.
-		task* current_checkpoint_task = nullptr;
+		task* current_milestone_task = nullptr;
 
 		// Queue of horizon tasks for which the associated commands were executed.
 		// Only accessed in task_manager::notify_horizon_executed, which is always called from the executor thread - no locking needed.
@@ -145,7 +145,7 @@ namespace detail {
 		// marker task id for "nothing to delete" - we can safely use 0 here
 		static constexpr task_id nothing_to_delete = 0;
 		// task_id ready for deletion, 0 if nothing to delete (set on notify, used on new task creation)
-		std::atomic<task_id> checkpoint_task_id_for_deletion = nothing_to_delete;
+		std::atomic<task_id> milestone_task_id_for_deletion = nothing_to_delete;
 		// How many horizons to delay before deleting tasks
 		static constexpr int horizon_deletion_lag = 3;
 
@@ -166,7 +166,7 @@ namespace detail {
 
 		void add_dependency(task* depender, task* dependee, dependency_kind kind = dependency_kind::TRUE_DEP);
 
-		inline bool need_new_horizon() const { return max_pseudo_critical_path_length - current_checkpoint_critical_path_length >= task_horizon_step_size; }
+		inline bool need_new_horizon() const { return max_pseudo_critical_path_length - current_milestone_critical_path_length >= task_horizon_step_size; }
 
 		int get_max_pseudo_critical_path_length() const { return max_pseudo_critical_path_length; }
 
@@ -174,10 +174,10 @@ namespace detail {
 
 		void generate_task_horizon();
 
-		void apply_checkpoint(task* new_checkpoint, const task* new_task_horizon);
+		void apply_milestone(task* new_milestone, const task* new_task_horizon);
 
 		// Needs to be called while task map accesses are safe (ie. mutex is locked)
-		void clean_up_pre_checkpoint_tasks();
+		void clean_up_pre_milestone_tasks();
 
 		void compute_dependencies(task_id tid);
 	};

@@ -15,12 +15,12 @@ namespace detail {
 	graph_generator::graph_generator(size_t num_nodes, task_manager& tm, reduction_manager& rm, command_graph& cdag)
 	    : task_mngr(tm), reduction_mngr(rm), num_nodes(num_nodes), cdag(cdag) {
 		// Build init command for each node (these are required to properly handle anti-dependencies on host-initialized buffers).
-		// We manually generate the first set of commands; horizons are used later on (see generate_horizon_or_barrier).
+		// We manually generate the first set of commands; milestones are used later on (see generate_milestone()).
 		for(auto i = 0u; i < num_nodes; ++i) {
 			const auto init_cmd = cdag.create<nop_command>(i);
 			node_data[i].current_init_cid = init_cmd->get_cid();
 		}
-		std::fill_n(std::back_inserter(current_checkpoint_cmds), num_nodes, nullptr);
+		std::fill_n(std::back_inserter(current_milestone_cmds), num_nodes, nullptr);
 	}
 
 	void graph_generator::add_buffer(buffer_id bid, const cl::sycl::range<3>& range) {
@@ -43,7 +43,7 @@ namespace detail {
 
 		const auto tsk = task_mngr.get_task(tid);
 
-		if(tsk->get_type() == task_type::HORIZON || tsk->get_type() == task_type::BARRIER) { generate_checkpoint(tid, to_checkpoint_type(tsk->get_type())); }
+		if(tsk->get_type() == task_type::HORIZON || tsk->get_type() == task_type::BARRIER) { generate_milestone(tid, to_milestone_type(tsk->get_type())); }
 
 		if(tsk->get_type() == task_type::COLLECTIVE) {
 			for(size_t nid = 0; nid < num_nodes; ++nid) {
@@ -477,24 +477,24 @@ namespace detail {
 		}
 	}
 
-	void graph_generator::generate_checkpoint(task_id tid, checkpoint_type type) {
+	void graph_generator::generate_milestone(task_id tid, milestone_type type) {
 		detail::command_id lowest_prev_cpid = 0;
 		for(node_id node = 0; node < num_nodes; ++node) {
-			// TODO this could be optimized to something like cdag.apply_horizon(node_id, checkpoint_cmd) with much fewer internal operations
+			// TODO this could be optimized to something like cdag.apply_horizon(node_id, milestone_cmd) with much fewer internal operations
 			const auto previous_execution_front = cdag.get_execution_front(node);
-			// Build checkpoint command and make current front depend on it
-			auto checkpoint_cmd = cdag.create<checkpoint_command>(node, tid, type);
+			// Build milestone command and make current front depend on it
+			auto milestone_cmd = cdag.create<milestone_command>(node, tid, type);
 			// Apply the previous horizon to data structures
 			const task_command* new_command_horizon;
 			switch(type) {
-			case checkpoint_type::HORIZON: new_command_horizon = current_checkpoint_cmds[node]; break;
-			case checkpoint_type::BARRIER: new_command_horizon = checkpoint_cmd; break;
+			case milestone_type::HORIZON: new_command_horizon = current_milestone_cmds[node]; break;
+			case milestone_type::BARRIER: new_command_horizon = milestone_cmd; break;
 			}
 
 			for(const auto& front_cmd : previous_execution_front) {
-				cdag.add_dependency(checkpoint_cmd, front_cmd);
+				cdag.add_dependency(milestone_cmd, front_cmd);
 			}
-			current_checkpoint_cmds[node] = checkpoint_cmd;
+			current_milestone_cmds[node] = milestone_cmd;
 
 			if(new_command_horizon != nullptr) {
 				// update "buffer_last_writer" and "last_collective_commands" structures to subsume pre-horizon commands
@@ -523,9 +523,9 @@ namespace detail {
 
 		// After updating all the data structures, delete before-cleanup-horizon commands
 		// Also remove commands from command_buffer_reads (if it exists)
-		if(cleanup_checkpoint_id > 0) {
+		if(cleanup_milestone_id > 0) {
 			cdag.erase_if([&](abstract_command* cmd) {
-				if(cmd->get_cid() < cleanup_checkpoint_id) {
+				if(cmd->get_cid() < cleanup_milestone_id) {
 					assert(cmd->is_flushed() && "Cannot delete unflushed command");
 					command_buffer_reads.erase(cmd->get_cid());
 					return true;
@@ -533,7 +533,7 @@ namespace detail {
 				return false;
 			});
 		}
-		cleanup_checkpoint_id = lowest_prev_cpid;
+		cleanup_milestone_id = lowest_prev_cpid;
 	}
 
 	void graph_generator::process_task_barrier_dependencies(task_id tid) {

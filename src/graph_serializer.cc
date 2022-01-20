@@ -97,9 +97,9 @@ namespace detail {
 		} else if(const auto* rcmd = dynamic_cast<reduction_command*>(cmd)) {
 			pkg.cmd = command_type::REDUCTION;
 			pkg.data = reduction_data{rcmd->get_rid()};
-		} else if(const auto* cpcmd = dynamic_cast<checkpoint_command*>(cmd)) {
-			pkg.cmd = command_type::CHECKPOINT;
-			pkg.data = checkpoint_data{cpcmd->get_tid(), cpcmd->get_checkpoint_type()};
+		} else if(const auto* cpcmd = dynamic_cast<milestone_command*>(cmd)) {
+			pkg.cmd = command_type::MILESTONE;
+			pkg.data = milestone_data{cpcmd->get_tid(), cpcmd->get_milestone_type()};
 		} else {
 			assert(false && "Unknown command");
 		}

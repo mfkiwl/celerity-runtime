@@ -159,12 +159,12 @@ namespace detail {
 
 	bool executor::handle_command(const command_pkg& pkg, const std::vector<command_id>& dependencies) {
 		switch(pkg.cmd) {
-		case command_type::CHECKPOINT: {
+		case command_type::MILESTONE: {
 			// Similar to task commands, a worker might receive the horizon command before creating the corresponding horizon task
-			const auto checkpoint_tid = std::get<checkpoint_data>(pkg.data).tid;
-			if(!task_mngr.has_task(checkpoint_tid)) return false;
+			const auto milestone_tid = std::get<milestone_data>(pkg.data).tid;
+			if(!task_mngr.has_task(milestone_tid)) return false;
 
-			create_job<checkpoint_job>(pkg, dependencies, task_mngr);
+			create_job<milestone_job>(pkg, dependencies, task_mngr);
 			break;
 		}
 		case command_type::PUSH: create_job<push_job>(pkg, dependencies, *btm, buffer_mngr); break;

@@ -30,7 +30,7 @@ namespace celerity {
 namespace detail {
 
 	struct task_manager_testspy {
-		static task* get_current_horizon_task(task_manager& tm) { return tm.current_checkpoint_task; }
+		static task* get_current_horizon_task(task_manager& tm) { return tm.current_milestone_task; }
 
 		static int get_num_horizons(task_manager& tm) {
 			int horizon_counter = 0;
@@ -105,7 +105,7 @@ namespace test_utils {
 				const detail::command_id cid = pkg.cid;
 				commands[cid] = {nid, pkg, dependencies};
 				if(pkg.cmd == detail::command_type::EXECUTION) { by_task[std::get<detail::execution_data>(pkg.data).tid].insert(cid); }
-				if(pkg.cmd == detail::command_type::CHECKPOINT) { by_task[std::get<detail::checkpoint_data>(pkg.data).tid].insert(cid); }
+				if(pkg.cmd == detail::command_type::MILESTONE) { by_task[std::get<detail::milestone_data>(pkg.data).tid].insert(cid); }
 				by_node[nid].insert(cid);
 			};
 		}
@@ -113,7 +113,7 @@ namespace test_utils {
 		std::set<detail::command_id> get_commands(
 		    std::optional<detail::task_id> tid, std::optional<detail::node_id> nid, std::optional<detail::command_type> cmd) const {
 			// Sanity check: Not all commands have an associated task id
-			assert(tid == std::nullopt || (cmd == std::nullopt || cmd == detail::command_type::EXECUTION || cmd == detail::command_type::CHECKPOINT));
+			assert(tid == std::nullopt || (cmd == std::nullopt || cmd == detail::command_type::EXECUTION || cmd == detail::command_type::MILESTONE));
 
 			std::set<detail::command_id> result;
 			std::transform(commands.cbegin(), commands.cend(), std::inserter(result, result.begin()), [](auto p) { return p.first; });

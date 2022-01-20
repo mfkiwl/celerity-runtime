@@ -483,7 +483,7 @@ namespace detail {
 				const auto* current_horizon = task_manager_testspy::get_current_horizon_task(tm);
 				if(current_horizon != nullptr && current_horizon->get_id() > last_executed_horizon) {
 					last_executed_horizon = current_horizon->get_id();
-					tm.notify_checkpoint_reached(last_executed_horizon, checkpoint_type::HORIZON);
+					tm.notify_milestone_reached(last_executed_horizon, milestone_type::HORIZON);
 				}
 			}
 		}

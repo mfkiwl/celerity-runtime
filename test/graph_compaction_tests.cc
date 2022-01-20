@@ -52,7 +52,7 @@ namespace detail {
 			region_map_testspy::print_regions(ggen.node_data.at(node_id{0}).buffer_last_writer.at(bid));
 		}
 		static size_t get_command_buffer_reads_size(const graph_generator& ggen) { return ggen.command_buffer_reads.size(); }
-		static const std::vector<task_command*>& get_current_checkpoint_cmds(const graph_generator& ggen) { return ggen.current_checkpoint_cmds; }
+		static const std::vector<task_command*>& get_current_milestone_cmds(const graph_generator& ggen) { return ggen.current_milestone_cmds; }
 	};
 
 	TEST_CASE("horizons prevent number of regions from growing indefinitely", "[horizon][command-graph]") {
@@ -110,8 +110,8 @@ namespace detail {
 			CHECK(buf_a_region_map_size() <= NUM_NODES * 2);
 			CHECK(buf_a_last_writer_map_size() <= NUM_NODES * 2);
 			for(node_id n = 0; n < NUM_NODES; ++n) {
-				CHECK(inspector.get_commands(std::nullopt, n, command_type::CHECKPOINT).size() <= NUM_TIMESTEPS);
-				CHECK(inspector.get_commands(std::nullopt, n, command_type::CHECKPOINT).size() >= NUM_TIMESTEPS - 1);
+				CHECK(inspector.get_commands(std::nullopt, n, command_type::MILESTONE).size() <= NUM_TIMESTEPS);
+				CHECK(inspector.get_commands(std::nullopt, n, command_type::MILESTONE).size() >= NUM_TIMESTEPS - 1);
 			}
 
 			// also check that unused commands are deleted
@@ -129,8 +129,8 @@ namespace detail {
 			CHECK(buf_a_region_map_size() <= NUM_NODES * 2 * 3);
 			CHECK(buf_a_last_writer_map_size() <= NUM_NODES * 2 * 3);
 			for(node_id n = 0; n < NUM_NODES; ++n) {
-				CHECK(inspector.get_commands(std::nullopt, n, command_type::CHECKPOINT).size() <= NUM_TIMESTEPS / 3 + 1);
-				CHECK(inspector.get_commands(std::nullopt, n, command_type::CHECKPOINT).size() >= NUM_TIMESTEPS / 3 - 1);
+				CHECK(inspector.get_commands(std::nullopt, n, command_type::MILESTONE).size() <= NUM_TIMESTEPS / 3 + 1);
+				CHECK(inspector.get_commands(std::nullopt, n, command_type::MILESTONE).size() >= NUM_TIMESTEPS / 3 - 1);
 			}
 
 			// also check that unused commands are deleted
@@ -199,7 +199,7 @@ namespace detail {
 		CHECK(deps.size() == 1);
 
 		// check that the dependee is the first horizon
-		auto horizon_cmds = inspector.get_commands({}, {}, command_type::CHECKPOINT);
+		auto horizon_cmds = inspector.get_commands({}, {}, command_type::MILESTONE);
 		CHECK(horizon_cmds.size() == 3);
 		CHECK(deps[0] == *horizon_cmds.cbegin());
 
@@ -251,7 +251,7 @@ namespace detail {
 		}
 
 		// check that all horizons were flushed
-		auto horizon_cmds = inspector.get_commands({}, {}, command_type::CHECKPOINT);
+		auto horizon_cmds = inspector.get_commands({}, {}, command_type::MILESTONE);
 		CHECK(horizon_cmds.size() == 4);
 
 		maybe_print_graphs(ctx);
@@ -298,7 +298,7 @@ namespace detail {
 				const auto* current_horizon = task_manager_testspy::get_current_horizon_task(ctx.get_task_manager());
 				if(current_horizon != nullptr && current_horizon->get_id() > last_executed_horizon) {
 					last_executed_horizon = current_horizon->get_id();
-					ctx.get_task_manager().notify_checkpoint_reached(last_executed_horizon, checkpoint_type::HORIZON);
+					ctx.get_task_manager().notify_milestone_reached(last_executed_horizon, milestone_type::HORIZON);
 				}
 			}
 		}
@@ -323,13 +323,13 @@ namespace detail {
 		});
 
 		const auto last_writer_cmd_0 = ctx.get_command_graph().get(new_last_writer_ids[0]);
-		CHECK((isa<checkpoint_command>(last_writer_cmd_0)
-		       && static_cast<checkpoint_command*>(last_writer_cmd_0)->get_checkpoint_type() == checkpoint_type::HORIZON));
+		CHECK(
+		    (isa<milestone_command>(last_writer_cmd_0) && static_cast<milestone_command*>(last_writer_cmd_0)->get_milestone_type() == milestone_type::HORIZON));
 		const auto last_writer_cmd_1 = ctx.get_command_graph().get(new_last_writer_ids[1]);
-		CHECK((isa<checkpoint_command>(last_writer_cmd_1)
-		       && static_cast<checkpoint_command*>(last_writer_cmd_0)->get_checkpoint_type() == checkpoint_type::HORIZON));
+		CHECK(
+		    (isa<milestone_command>(last_writer_cmd_1) && static_cast<milestone_command*>(last_writer_cmd_0)->get_milestone_type() == milestone_type::HORIZON));
 
-		const auto& current_horizon_cmds = graph_generator_testspy::get_current_checkpoint_cmds(ctx.get_graph_generator());
+		const auto& current_horizon_cmds = graph_generator_testspy::get_current_milestone_cmds(ctx.get_graph_generator());
 		INFO("previous horizons are being used");
 		CHECK(std::none_of(current_horizon_cmds.cbegin(), current_horizon_cmds.cend(),
 		    [&](auto* cmd) { return cmd->get_cid() == new_last_writer_ids[0] || cmd->get_cid() == new_last_writer_ids[1]; }));
@@ -373,7 +373,7 @@ namespace detail {
 			CHECK(std::distance(second_deps.begin(), second_deps.end()) == 1);
 			for(const auto& dep : second_deps) {
 				CHECK(dep.kind == dependency_kind::ORDER_DEP);
-				CHECK((isa<checkpoint_command>(dep.node) && static_cast<checkpoint_command*>(dep.node)->get_checkpoint_type() == checkpoint_type::HORIZON));
+				CHECK((isa<milestone_command>(dep.node) && static_cast<milestone_command*>(dep.node)->get_milestone_type() == milestone_type::HORIZON));
 			}
 		}
 

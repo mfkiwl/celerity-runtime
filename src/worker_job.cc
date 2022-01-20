@@ -48,17 +48,17 @@ namespace detail {
 	}
 
 	// --------------------------------------------------------------------------------------------------------------------
-	// --------------------------------------------------- CHECKPOINT --------------------------------------------------------
+	// --------------------------------------------------- MILESTONE --------------------------------------------------------
 	// --------------------------------------------------------------------------------------------------------------------
 
-	std::pair<celerity::detail::command_type, std::string> checkpoint_job::get_description(const command_pkg& pkg) {
-		return std::make_pair(command_type::CHECKPOINT, "CHECKPOINT");
+	std::pair<celerity::detail::command_type, std::string> milestone_job::get_description(const command_pkg& pkg) {
+		return std::make_pair(command_type::MILESTONE, "MILESTONE");
 	}
 
-	bool checkpoint_job::execute(const command_pkg& pkg, std::shared_ptr<logger> logger) {
-		const auto data = std::get<checkpoint_data>(pkg.data);
-		if(data.type == checkpoint_type::BARRIER) { MPI_Barrier(MPI_COMM_WORLD); }
-		task_mngr.notify_checkpoint_reached(data.tid, data.type);
+	bool milestone_job::execute(const command_pkg& pkg, std::shared_ptr<logger> logger) {
+		const auto data = std::get<milestone_data>(pkg.data);
+		if(data.type == milestone_type::BARRIER) { MPI_Barrier(MPI_COMM_WORLD); }
+		task_mngr.notify_milestone_reached(data.tid, data.type);
 		return true;
 	};
 

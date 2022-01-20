@@ -93,9 +93,9 @@ namespace detail {
 		command_graph& cdag;
 
 		// The most recent horizon command per node.
-		std::vector<task_command*> current_checkpoint_cmds;
+		std::vector<task_command*> current_milestone_cmds;
 		// The id for the next cleanup horizon (commands with ids lower than the cleanup horizon will be deleted next)
-		detail::command_id cleanup_checkpoint_id = 0;
+		detail::command_id cleanup_milestone_id = 0;
 
 		// NOTE: We have several data structures that keep track of the "global state" of the distributed program, across all tasks and nodes.
 		// While it might seem that this is problematic when the ordering of tasks can be chosen freely (by the scheduler),
@@ -123,7 +123,7 @@ namespace detail {
 
 		void process_task_barrier_dependencies(task_id tid);
 
-		void generate_checkpoint(task_id tid, checkpoint_type type);
+		void generate_milestone(task_id tid, milestone_type type);
 	};
 
 } // namespace detail

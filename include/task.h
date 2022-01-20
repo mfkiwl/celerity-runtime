@@ -32,16 +32,16 @@ namespace detail {
 		DEVICE,
 	};
 
-	enum class checkpoint_type {
+	enum class milestone_type {
 		HORIZON = static_cast<std::underlying_type_t<task_type>>(task_type::HORIZON),
 		BARRIER = static_cast<std::underlying_type_t<task_type>>(task_type::BARRIER),
 	};
 
-	inline task_type to_task_type(checkpoint_type tt) { return static_cast<task_type>(tt); }
+	inline task_type to_task_type(milestone_type tt) { return static_cast<task_type>(tt); }
 
-	inline checkpoint_type to_checkpoint_type(task_type tt) {
+	inline milestone_type to_milestone_type(task_type tt) {
 		assert(tt == task_type::HORIZON || tt == task_type::BARRIER);
-		return static_cast<checkpoint_type>(tt);
+		return static_cast<milestone_type>(tt);
 	}
 
 	struct command_group_storage_base {

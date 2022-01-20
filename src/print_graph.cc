@@ -77,8 +77,8 @@ namespace detail {
 			    subrange_to_grid_box(apcmd->get_source()->get_range()));
 		} else if(const auto rrcmd = dynamic_cast<const reduction_command*>(cmd)) {
 			label += fmt::format("REDUCTION {}", rrcmd->get_rid());
-		} else if(const auto cpcmd = dynamic_cast<const checkpoint_command*>(cmd)) {
-			label += fmt::format("CHECKPOINT");
+		} else if(const auto cpcmd = dynamic_cast<const milestone_command*>(cmd)) {
+			label += fmt::format("MILESTONE");
 		} else {
 			return fmt::format("[{}] UNKNOWN\\n{}", cmd->get_cid(), cmd->debug_label);
 		}
