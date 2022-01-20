@@ -140,7 +140,7 @@ namespace detail {
 		task* current_milestone_task = nullptr;
 
 		// Queue of horizon tasks for which the associated commands were executed.
-		// Only accessed in task_manager::notify_horizon_executed, which is always called from the executor thread - no locking needed.
+		// Only accessed in task_manager::notify_milestone_reached, which is always called from the executor thread - no locking needed.
 		std::queue<task_id> executed_horizons;
 		// marker task id for "nothing to delete" - we can safely use 0 here
 		static constexpr task_id nothing_to_delete = 0;
@@ -149,10 +149,8 @@ namespace detail {
 		// How many horizons to delay before deleting tasks
 		static constexpr int horizon_deletion_lag = 3;
 
-		// marker task id for "nothing to delete" - we can safely use 0 here
-		static constexpr task_id no_barrier_executed = 0;
 		std::mutex barrier_mutex;
-		task_id last_executed_barrier = no_barrier_executed;
+		task_id last_executed_barrier = 0;
 		std::condition_variable barrier_executed;
 
 		// Set of tasks with no dependents
@@ -174,7 +172,7 @@ namespace detail {
 
 		void generate_task_horizon();
 
-		void apply_milestone(task* new_milestone, const task* new_task_horizon);
+		void apply_milestone(task* new_milestone, const task* effective_horizon);
 
 		// Needs to be called while task map accesses are safe (ie. mutex is locked)
 		void clean_up_pre_milestone_tasks();

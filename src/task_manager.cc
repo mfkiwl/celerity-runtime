@@ -214,7 +214,7 @@ namespace detail {
 		max_pseudo_critical_path_length = std::max(max_pseudo_critical_path_length, depender->get_pseudo_critical_path_length());
 	}
 
-	void task_manager::apply_milestone(task* new_milestone, const task* new_task_horizon) {
+	void task_manager::apply_milestone(task* new_milestone, const task* effective_horizon) {
 		// precondition: caller holds a lock on task_mutex
 
 		// add dependencies from a copy of the front to this task
@@ -224,20 +224,20 @@ namespace detail {
 		}
 
 		// apply the previous horizon to buffers_last_writers and last_collective_tasks data structs
-		if(new_task_horizon != nullptr) {
-			const task_id prev_cptid = new_task_horizon->get_id();
+		if(effective_horizon != nullptr) {
+			const task_id effective_horizon_id = effective_horizon->get_id();
 			for(auto& [_, buffer_region_map] : buffers_last_writers) {
-				buffer_region_map.apply_to_values([prev_cptid](std::optional<task_id> tid) -> std::optional<task_id> {
+				buffer_region_map.apply_to_values([effective_horizon_id](std::optional<task_id> tid) -> std::optional<task_id> {
 					if(!tid) return tid;
-					return {std::max(prev_cptid, *tid)};
+					return {std::max(effective_horizon_id, *tid)};
 				});
 			}
 			for(auto& [cgid, tid] : last_collective_tasks) {
-				tid = std::max(prev_cptid, tid);
+				tid = std::max(effective_horizon_id, tid);
 			}
 
 			// We also use the previous horizon as the new init task for host-initialized buffers
-			current_init_task_id = prev_cptid;
+			current_init_task_id = effective_horizon_id;
 		}
 	}
 

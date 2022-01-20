@@ -478,46 +478,42 @@ namespace detail {
 	}
 
 	void graph_generator::generate_milestone(task_id tid, milestone_type type) {
-		detail::command_id lowest_prev_cpid = 0;
+		detail::command_id earliest_effective_horizon_id = 0;
 		for(node_id node = 0; node < num_nodes; ++node) {
 			// TODO this could be optimized to something like cdag.apply_horizon(node_id, milestone_cmd) with much fewer internal operations
 			const auto previous_execution_front = cdag.get_execution_front(node);
 			// Build milestone command and make current front depend on it
 			auto milestone_cmd = cdag.create<milestone_command>(node, tid, type);
-			// Apply the previous horizon to data structures
-			const task_command* new_command_horizon;
-			switch(type) {
-			case milestone_type::HORIZON: new_command_horizon = current_milestone_cmds[node]; break;
-			case milestone_type::BARRIER: new_command_horizon = milestone_cmd; break;
-			}
+			// Horizons replace last-writers with a delay of 1 horizon, barriers do so immediately to serialize execution
+			const auto effective_horizon = type == milestone_type::HORIZON ? current_milestone_cmds[node] : milestone_cmd;
 
 			for(const auto& front_cmd : previous_execution_front) {
 				cdag.add_dependency(milestone_cmd, front_cmd);
 			}
 			current_milestone_cmds[node] = milestone_cmd;
 
-			if(new_command_horizon != nullptr) {
-				// update "buffer_last_writer" and "last_collective_commands" structures to subsume pre-horizon commands
-				const auto horizon_id = new_command_horizon->get_cid();
+			if(effective_horizon != nullptr) {
+				// update "buffer_last_writer" and "last_collective_commands" structures to subsume pre-milestone commands
+				const auto effective_horizon_id = effective_horizon->get_cid();
 				auto& this_node_data = node_data.at(node);
 				for(auto& blw_pair : this_node_data.buffer_last_writer) {
-					blw_pair.second.apply_to_values([horizon_id](std::optional<command_id> cid) -> std::optional<command_id> {
+					blw_pair.second.apply_to_values([effective_horizon_id](std::optional<command_id> cid) -> std::optional<command_id> {
 						if(!cid) return cid;
-						return {std::max(horizon_id, *cid)};
+						return {std::max(effective_horizon_id, *cid)};
 					});
 				}
 				for(auto& [cgid, cid] : this_node_data.last_collective_commands) {
-					cid = std::max(horizon_id, cid);
+					cid = std::max(effective_horizon_id, cid);
 				}
 				// update lowest previous horizon id (for later command deletion)
-				if(lowest_prev_cpid == 0) {
-					lowest_prev_cpid = horizon_id;
+				if(earliest_effective_horizon_id == 0) {
+					earliest_effective_horizon_id = effective_horizon_id;
 				} else {
-					lowest_prev_cpid = std::min(lowest_prev_cpid, horizon_id);
+					earliest_effective_horizon_id = std::min(earliest_effective_horizon_id, effective_horizon_id);
 				}
 
 				// We also use the previous horizon as the new init cmd for host-initialized buffers
-				node_data[node].current_init_cid = horizon_id;
+				node_data[node].current_init_cid = effective_horizon_id;
 			}
 		}
 
@@ -533,7 +529,7 @@ namespace detail {
 				return false;
 			});
 		}
-		cleanup_milestone_id = lowest_prev_cpid;
+		cleanup_milestone_id = earliest_effective_horizon_id;
 	}
 
 	void graph_generator::process_task_barrier_dependencies(task_id tid) {
