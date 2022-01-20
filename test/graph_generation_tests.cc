@@ -1460,5 +1460,64 @@ namespace detail {
 		maybe_print_graphs(ctx);
 	}
 
+	TEST_CASE("barriers serialize commands", "[graph_generator][command-graph][barrier]") {
+		using namespace cl::sycl::access;
+
+		const size_t num_nodes = 2;
+		test_utils::cdag_test_context ctx(num_nodes);
+		auto& tm = ctx.get_task_manager();
+		auto& ggen = ctx.get_graph_generator();
+
+		test_utils::mock_buffer_factory mbf(&tm, &ggen);
+
+		const auto tid_a = test_utils::build_and_flush(ctx, num_nodes, test_utils::add_compute_task<class UKN(task_a)>(tm, [&](handler& cgh) {}));
+		const auto tid_b = test_utils::build_and_flush(ctx, num_nodes, test_utils::add_compute_task<class UKN(task_b)>(tm, [&](handler& cgh) {}));
+
+		const auto tid_barrier = test_utils::build_and_flush(ctx, num_nodes, tm.create_barrier_task());
+
+		auto buf = mbf.create_buffer(range<1>{1}, true /* host_initialized */);
+		const auto tid_c = test_utils::build_and_flush(
+		    ctx, num_nodes, test_utils::add_compute_task<class UKN(task_c)>(tm, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
+		const auto tid_d = test_utils::build_and_flush(
+		    ctx, num_nodes, test_utils::add_compute_task<class UKN(task_d)>(tm, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
+
+		auto& inspector = ctx.get_inspector();
+		auto& cdag = ctx.get_command_graph();
+
+		const auto get_single_command = [&](task_id tid, node_id nid) {
+			const auto set = inspector.get_commands(tid, nid, {});
+			REQUIRE(set.size() == 1);
+			return cdag.get(*set.begin());
+		};
+
+		for(node_id nid = 0; nid < num_nodes; ++nid) {
+			CAPTURE(nid);
+
+			const auto cmd_a = get_single_command(tid_a, nid);
+			const auto cmd_b = get_single_command(tid_a, nid);
+			CHECK(cmd_a->get_dependencies().empty());
+			CHECK(cmd_b->get_dependencies().empty());
+
+			const auto cmd_barrier = get_single_command(tid_barrier, nid);
+			const auto barrier_deps = cmd_barrier->get_dependencies();
+			CHECK(std::distance(barrier_deps.begin(), barrier_deps.end()) == 2);
+			CHECK(inspector.has_dependency(cmd_barrier->get_cid(), cmd_a->get_cid()));
+			CHECK(inspector.has_dependency(cmd_barrier->get_cid(), cmd_b->get_cid()));
+
+			const auto cmd_c = get_single_command(tid_c, nid);
+			const auto c_deps = cmd_c->get_dependencies();
+			CHECK(std::distance(c_deps.begin(), c_deps.end()) == 1);
+			CHECK(inspector.has_dependency(cmd_c->get_cid(), cmd_barrier->get_cid()));
+
+			const auto cmd_d = get_single_command(tid_d, nid);
+			const auto d_deps = cmd_d->get_dependencies();
+			CHECK(std::distance(d_deps.begin(), d_deps.end()) == 2);
+			CHECK(inspector.has_dependency(cmd_d->get_cid(), cmd_barrier->get_cid()));
+			CHECK(inspector.has_dependency(cmd_d->get_cid(), cmd_c->get_cid()));
+		}
+
+		maybe_print_graphs(ctx);
+	}
+
 } // namespace detail
 } // namespace celerity

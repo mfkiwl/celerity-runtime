@@ -23,6 +23,7 @@ namespace detail {
 		COLLECTIVE,     ///< host task with implicit 1d global size = #ranks and fixed split
 		MASTER_NODE,    ///< zero-dimensional host task
 		HORIZON,        ///< task horizon
+		BARRIER,        ///< sync or shutdown
 	};
 
 	enum class execution_target {
@@ -30,6 +31,18 @@ namespace detail {
 		HOST,
 		DEVICE,
 	};
+
+	enum class checkpoint_type {
+		HORIZON = static_cast<std::underlying_type_t<task_type>>(task_type::HORIZON),
+		BARRIER = static_cast<std::underlying_type_t<task_type>>(task_type::BARRIER),
+	};
+
+	inline task_type to_task_type(checkpoint_type tt) { return static_cast<task_type>(tt); }
+
+	inline checkpoint_type to_checkpoint_type(task_type tt) {
+		assert(tt == task_type::HORIZON || tt == task_type::BARRIER);
+		return static_cast<checkpoint_type>(tt);
+	}
 
 	struct command_group_storage_base {
 		virtual void operator()(handler& cgh) const = 0;
@@ -99,7 +112,8 @@ namespace detail {
 			case task_type::HOST_COMPUTE:
 			case task_type::COLLECTIVE:
 			case task_type::MASTER_NODE: return execution_target::HOST;
-			case task_type::HORIZON: return execution_target::NONE;
+			case task_type::HORIZON:
+			case task_type::BARRIER: return execution_target::NONE;
 			default: assert(!"Unhandled task type"); return execution_target::NONE;
 			}
 		}
@@ -136,6 +150,10 @@ namespace detail {
 
 		static std::unique_ptr<task> make_horizon_task(task_id tid) {
 			return std::unique_ptr<task>(new task(tid, task_type::HORIZON, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}));
+		}
+
+		static std::unique_ptr<task> make_barrier(task_id tid) {
+			return std::unique_ptr<task>(new task(tid, task_type::BARRIER, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}));
 		}
 
 	  private:

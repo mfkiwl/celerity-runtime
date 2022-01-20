@@ -9,7 +9,7 @@ namespace detail {
 
 	task_manager::task_manager(size_t num_collective_nodes, host_queue* queue, reduction_manager* reduction_mgr)
 	    : num_collective_nodes(num_collective_nodes), queue(queue), reduction_mngr(reduction_mgr) {
-		// We manually generate the first init task; horizons are used later on (see generate_task_horizon).
+		// We manually generate the first init task; horizons are used later on (see generate_task_horizon_or_barrier).
 		current_init_task_id = get_new_tid();
 		task_map[current_init_task_id] = task::make_nop(current_init_task_id);
 	}
@@ -42,21 +42,41 @@ namespace detail {
 		}
 	}
 
-	void task_manager::notify_horizon_executed(task_id tid) {
+	void task_manager::notify_checkpoint_reached(task_id tid, checkpoint_type cpt) {
 #ifndef NDEBUG
 		{
 			std::lock_guard lock{task_mutex};
 			assert(task_map.count(tid) != 0);
-			assert(task_map.at(tid)->get_type() == task_type::HORIZON);
+			assert(task_map.at(tid)->get_type() == to_task_type(cpt));
 		}
-		assert(executed_horizons.empty() || executed_horizons.back() != tid);
 #endif
 
-		executed_horizons.push(tid); // no locking needed - see definition
-		if(executed_horizons.size() >= horizon_deletion_lag) {
-			// actual cleanup happens on new task creation
-			horizon_task_id_for_deletion.store(executed_horizons.front()); // atomic
-			executed_horizons.pop();
+		// no locking needed - see definition of executed_horizons
+		// after store to checkpoint_task_id_for_deletion, actual cleanup happens on new task creation
+		switch(cpt) {
+		case checkpoint_type::HORIZON:
+			executed_horizons.push(tid);
+			if(executed_horizons.size() >= horizon_deletion_lag) {
+				checkpoint_task_id_for_deletion.store(executed_horizons.front());
+				executed_horizons.pop();
+			}
+			break;
+
+		case checkpoint_type::BARRIER:
+			while(!executed_horizons.empty()) {
+				assert(executed_horizons.front() < tid);
+				// all pending horizons will be implicitly deleted
+				executed_horizons.pop();
+			}
+			checkpoint_task_id_for_deletion.store(tid);
+
+			{
+				std::lock_guard lock{barrier_mutex};
+				assert(last_executed_barrier < tid);
+				last_executed_barrier = tid;
+				barrier_executed.notify_all();
+			}
+			break;
 		}
 	}
 
@@ -167,6 +187,15 @@ namespace detail {
 			}
 			last_collective_tasks.emplace(cgid, tid);
 		}
+
+		if(last_barrier_task_id) {
+			const auto deps = tsk->get_dependencies();
+			if(std::find_if(deps.begin(), deps.end(), [](const auto& dep) { return dep.kind == dependency_kind::TRUE_DEP; }) == deps.end()) {
+				add_dependency(tsk.get(), task_map.at(last_barrier_task_id).get(), dependency_kind::TRUE_DEP);
+			}
+		}
+
+		if(tsk->get_type() == task_type::BARRIER) { last_barrier_task_id = tsk->get_id(); }
 	}
 
 	task& task_manager::register_task_internal(std::unique_ptr<task> task) {
@@ -191,45 +220,64 @@ namespace detail {
 		max_pseudo_critical_path_length = std::max(max_pseudo_critical_path_length, depender->get_pseudo_critical_path_length());
 	}
 
+	void task_manager::apply_checkpoint(task* new_checkpoint, const task* new_task_horizon) {
+		// precondition: caller holds a lock on task_mutex
+
+		// add dependencies from a copy of the front to this task
+		auto current_front = get_execution_front();
+		for(task* front_task : current_front) {
+			if(front_task != new_checkpoint) { add_dependency(new_checkpoint, front_task); }
+		}
+
+		// apply the previous horizon to buffers_last_writers and last_collective_tasks data structs
+		if(new_task_horizon != nullptr) {
+			const task_id prev_cptid = new_task_horizon->get_id();
+			for(auto& [_, buffer_region_map] : buffers_last_writers) {
+				buffer_region_map.apply_to_values([prev_cptid](std::optional<task_id> tid) -> std::optional<task_id> {
+					if(!tid) return tid;
+					return {std::max(prev_cptid, *tid)};
+				});
+			}
+			for(auto& [cgid, tid] : last_collective_tasks) {
+				tid = std::max(prev_cptid, tid);
+			}
+
+			// We also use the previous horizon as the new init task for host-initialized buffers
+			current_init_task_id = prev_cptid;
+		}
+	}
+
 	void task_manager::generate_task_horizon() {
 		// we are probably overzealous in locking here
 		{
 			std::lock_guard lock(task_mutex);
-			current_horizon_critical_path_length = max_pseudo_critical_path_length;
-
-			auto* previous_horizon_task = current_horizon_task;
-			current_horizon_task = &register_task_internal(task::make_horizon_task(get_new_tid()));
-
-			// add dependencies from a copy of the front to this task
-			auto current_front = get_execution_front();
-			for(task* front_task : current_front) {
-				if(front_task != current_horizon_task) { add_dependency(current_horizon_task, front_task); }
-			}
-
-			// apply the previous horizon to buffers_last_writers and last_collective_tasks data structs
-			if(previous_horizon_task != nullptr) {
-				const task_id prev_hid = previous_horizon_task->get_id();
-				for(auto& [_, buffer_region_map] : buffers_last_writers) {
-					buffer_region_map.apply_to_values([prev_hid](std::optional<task_id> tid) -> std::optional<task_id> {
-						if(!tid) return tid;
-						return {std::max(prev_hid, *tid)};
-					});
-				}
-				for(auto& [cgid, tid] : last_collective_tasks) {
-					tid = std::max(prev_hid, tid);
-				}
-
-				// We also use the previous horizon as the new init task for host-initialized buffers
-				current_init_task_id = prev_hid;
-			}
+			current_checkpoint_critical_path_length = max_pseudo_critical_path_length;
+			const auto new_horizon_task = &register_task_internal(task::make_horizon_task(get_new_tid()));
+			apply_checkpoint(new_horizon_task, current_checkpoint_task);
+			current_checkpoint_task = new_horizon_task;
 		}
 
 		// it's important that we don't hold the lock while doing this
-		invoke_callbacks(current_horizon_task->get_id(), task_type::HORIZON);
+		invoke_callbacks(current_checkpoint_task->get_id(), task_type::HORIZON);
 	}
 
-	void task_manager::clean_up_pre_horizon_tasks() {
-		task_id deletion_task_id = horizon_task_id_for_deletion.exchange(nothing_to_delete);
+	task_id task_manager::create_barrier_task() {
+		// we are probably overzealous in locking here
+		{
+			std::lock_guard lock(task_mutex);
+			current_checkpoint_task = &register_task_internal(task::make_barrier(get_new_tid()));
+			apply_checkpoint(current_checkpoint_task, current_checkpoint_task);
+			compute_dependencies(current_checkpoint_task->get_id());
+			current_checkpoint_critical_path_length = max_pseudo_critical_path_length;
+		}
+
+		// it's important that we don't hold the lock while doing this
+		invoke_callbacks(current_checkpoint_task->get_id(), task_type::BARRIER);
+		return current_checkpoint_task->get_id();
+	}
+
+	void task_manager::clean_up_pre_checkpoint_tasks() {
+		task_id deletion_task_id = checkpoint_task_id_for_deletion.exchange(nothing_to_delete);
 		if(deletion_task_id != nothing_to_delete) {
 			for(auto iter = task_map.begin(); iter != task_map.end();) {
 				if(iter->first < deletion_task_id) {
@@ -239,6 +287,18 @@ namespace detail {
 				}
 			}
 		}
+	}
+
+	void task_manager::wait_on_barrier(task_id tid) {
+#ifndef NDEBUG
+		{
+			std::lock_guard lock(task_mutex);
+			assert(task_map.at(tid)->get_type() == task_type::BARRIER);
+		}
+#endif
+
+		std::unique_lock lock{barrier_mutex};
+		barrier_executed.wait(lock, [=] { return last_executed_barrier >= tid; });
 	}
 
 } // namespace detail

@@ -58,10 +58,10 @@ namespace detail {
 		virtual std::pair<command_type, std::string> get_description(const command_pkg& pkg) = 0;
 	};
 
-	class horizon_job : public worker_job {
+	class checkpoint_job : public worker_job {
 	  public:
-		horizon_job(command_pkg pkg, std::shared_ptr<logger> job_logger, task_manager& tm) : worker_job(pkg, job_logger), task_mngr(tm) {
-			assert(pkg.cmd == command_type::HORIZON);
+		checkpoint_job(command_pkg pkg, std::shared_ptr<logger> job_logger, task_manager& tm) : worker_job(pkg, job_logger), task_mngr(tm) {
+			assert(pkg.cmd == command_type::CHECKPOINT);
 		}
 
 	  private:

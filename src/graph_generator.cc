@@ -15,12 +15,12 @@ namespace detail {
 	graph_generator::graph_generator(size_t num_nodes, task_manager& tm, reduction_manager& rm, command_graph& cdag)
 	    : task_mngr(tm), reduction_mngr(rm), num_nodes(num_nodes), cdag(cdag) {
 		// Build init command for each node (these are required to properly handle anti-dependencies on host-initialized buffers).
-		// We manually generate the first set of commands; horizons are used later on (see generate_horizon).
+		// We manually generate the first set of commands; horizons are used later on (see generate_horizon_or_barrier).
 		for(auto i = 0u; i < num_nodes; ++i) {
 			const auto init_cmd = cdag.create<nop_command>(i);
 			node_data[i].current_init_cid = init_cmd->get_cid();
 		}
-		std::fill_n(std::back_inserter(current_horizon_cmds), num_nodes, nullptr);
+		std::fill_n(std::back_inserter(current_checkpoint_cmds), num_nodes, nullptr);
 	}
 
 	void graph_generator::add_buffer(buffer_id bid, const cl::sycl::range<3>& range) {
@@ -41,12 +41,9 @@ namespace detail {
 		std::lock_guard<std::mutex> lock(buffer_mutex);
 		// TODO: Maybe assert that this task hasn't been processed before
 
-		auto tsk = task_mngr.get_task(tid);
+		const auto tsk = task_mngr.get_task(tid);
 
-		if(tsk->get_type() == task_type::HORIZON) {
-			generate_horizon(tid);
-			return;
-		}
+		if(tsk->get_type() == task_type::HORIZON || tsk->get_type() == task_type::BARRIER) { generate_checkpoint(tid, to_checkpoint_type(tsk->get_type())); }
 
 		if(tsk->get_type() == task_type::COLLECTIVE) {
 			for(size_t nid = 0; nid < num_nodes; ++nid) {
@@ -65,7 +62,9 @@ namespace detail {
 				}
 				last_collective_commands.emplace(cgid, cmd->get_cid());
 			}
-		} else {
+		}
+
+		if(tsk->get_type() == task_type::HOST_COMPUTE || tsk->get_type() == task_type::DEVICE_COMPUTE || tsk->get_type() == task_type::MASTER_NODE) {
 			const auto sr = subrange<3>{tsk->get_global_offset(), tsk->get_global_size()};
 			cdag.create<execution_command>(0, tid, sr);
 		}
@@ -92,6 +91,8 @@ namespace detail {
 		// TODO: At some point we might want to do this also before calling transformers
 		// --> So that more advanced transformations can also take data transfers into account
 		process_task_data_requirements(tid);
+
+		process_task_barrier_dependencies(tid);
 	}
 
 	using buffer_requirements_map = std::unordered_map<buffer_id, std::unordered_map<cl::sycl::access::mode, GridRegion<3>>>;
@@ -167,6 +168,7 @@ namespace detail {
 
 	void graph_generator::process_task_data_requirements(task_id tid) {
 		const auto tsk = task_mngr.get_task(tid);
+		if(tsk->get_execution_target() == execution_target::NONE) return;
 
 		// Copy the list of task commands so we can safely modify the command graph in the loop below
 		// NOTE: We assume that none of these commands are deleted
@@ -475,48 +477,55 @@ namespace detail {
 		}
 	}
 
-	void graph_generator::generate_horizon(task_id tid) {
-		detail::command_id lowest_prev_hid = 0;
+	void graph_generator::generate_checkpoint(task_id tid, checkpoint_type type) {
+		detail::command_id lowest_prev_cpid = 0;
 		for(node_id node = 0; node < num_nodes; ++node) {
-			// TODO this could be optimized to something like cdag.apply_horizon(node_id, horizon_cmd) with much fewer internal operations
-			auto previous_execution_front = cdag.get_execution_front(node);
-			// Build horizon command and make current front depend on it
-			auto horizon_cmd = cdag.create<horizon_command>(node, tid);
-			for(const auto& front_cmd : previous_execution_front) {
-				cdag.add_dependency(horizon_cmd, front_cmd);
-			}
+			// TODO this could be optimized to something like cdag.apply_horizon(node_id, checkpoint_cmd) with much fewer internal operations
+			const auto previous_execution_front = cdag.get_execution_front(node);
+			// Build checkpoint command and make current front depend on it
+			auto checkpoint_cmd = cdag.create<checkpoint_command>(node, tid, type);
 			// Apply the previous horizon to data structures
-			auto* prev_horizon = current_horizon_cmds[node];
-			current_horizon_cmds[node] = horizon_cmd;
-			if(prev_horizon != nullptr) {
+			const task_command* new_command_horizon;
+			switch(type) {
+			case checkpoint_type::HORIZON: new_command_horizon = current_checkpoint_cmds[node]; break;
+			case checkpoint_type::BARRIER: new_command_horizon = checkpoint_cmd; break;
+			}
+
+			for(const auto& front_cmd : previous_execution_front) {
+				cdag.add_dependency(checkpoint_cmd, front_cmd);
+			}
+			current_checkpoint_cmds[node] = checkpoint_cmd;
+
+			if(new_command_horizon != nullptr) {
 				// update "buffer_last_writer" and "last_collective_commands" structures to subsume pre-horizon commands
-				const auto prev_hid = prev_horizon->get_cid();
+				const auto horizon_id = new_command_horizon->get_cid();
 				auto& this_node_data = node_data.at(node);
 				for(auto& blw_pair : this_node_data.buffer_last_writer) {
-					blw_pair.second.apply_to_values([prev_hid](std::optional<command_id> cid) -> std::optional<command_id> {
+					blw_pair.second.apply_to_values([horizon_id](std::optional<command_id> cid) -> std::optional<command_id> {
 						if(!cid) return cid;
-						return {std::max(prev_hid, *cid)};
+						return {std::max(horizon_id, *cid)};
 					});
 				}
 				for(auto& [cgid, cid] : this_node_data.last_collective_commands) {
-					cid = std::max(prev_hid, cid);
+					cid = std::max(horizon_id, cid);
 				}
 				// update lowest previous horizon id (for later command deletion)
-				if(lowest_prev_hid == 0) {
-					lowest_prev_hid = prev_hid;
+				if(lowest_prev_cpid == 0) {
+					lowest_prev_cpid = horizon_id;
 				} else {
-					lowest_prev_hid = std::min(lowest_prev_hid, prev_hid);
+					lowest_prev_cpid = std::min(lowest_prev_cpid, horizon_id);
 				}
 
 				// We also use the previous horizon as the new init cmd for host-initialized buffers
-				node_data[node].current_init_cid = prev_hid;
+				node_data[node].current_init_cid = horizon_id;
 			}
 		}
+
 		// After updating all the data structures, delete before-cleanup-horizon commands
 		// Also remove commands from command_buffer_reads (if it exists)
-		if(cleanup_horizon_id > 0) {
+		if(cleanup_checkpoint_id > 0) {
 			cdag.erase_if([&](abstract_command* cmd) {
-				if(cmd->get_cid() < cleanup_horizon_id) {
+				if(cmd->get_cid() < cleanup_checkpoint_id) {
 					assert(cmd->is_flushed() && "Cannot delete unflushed command");
 					command_buffer_reads.erase(cmd->get_cid());
 					return true;
@@ -524,7 +533,25 @@ namespace detail {
 				return false;
 			});
 		}
-		cleanup_horizon_id = lowest_prev_hid;
+		cleanup_checkpoint_id = lowest_prev_cpid;
+	}
+
+	void graph_generator::process_task_barrier_dependencies(task_id tid) {
+		for(auto& cmd : cdag.task_commands(tid)) {
+			const auto last_barrier = node_data.at(cmd->get_nid()).last_barrier;
+			if(last_barrier) {
+				const auto deps = cmd->get_dependencies();
+				if(std::find_if(deps.begin(), deps.end(), [](const auto& dep) { return dep.kind == dependency_kind::TRUE_DEP; }) == deps.end()) {
+					cdag.add_dependency(cmd, cdag.get(last_barrier), dependency_kind::TRUE_DEP);
+				}
+			}
+		}
+
+		if(task_mngr.get_task(tid)->get_type() == task_type::BARRIER) {
+			for(const auto& barrier : cdag.task_commands(tid)) {
+				node_data[barrier->get_nid()].last_barrier = barrier->get_cid();
+			}
+		}
 	}
 
 } // namespace detail

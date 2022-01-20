@@ -28,6 +28,7 @@ namespace detail {
 		case task_type::COLLECTIVE: return fmt::format("Task {} (collective #{})", tsk->get_id(), static_cast<size_t>(tsk->get_collective_group_id()));
 		case task_type::MASTER_NODE: return fmt::format("Task {} (master-node)", tsk->get_id());
 		case task_type::HORIZON: return fmt::format("Task {} (horizon)", tsk->get_id());
+		case task_type::BARRIER: return fmt::format("Task {} (barrier)", tsk->get_id());
 		default: assert(false); return fmt::format("Task {} (unknown)", tsk->get_id());
 		}
 	}
@@ -76,8 +77,8 @@ namespace detail {
 			    subrange_to_grid_box(apcmd->get_source()->get_range()));
 		} else if(const auto rrcmd = dynamic_cast<const reduction_command*>(cmd)) {
 			label += fmt::format("REDUCTION {}", rrcmd->get_rid());
-		} else if(const auto hcmd = dynamic_cast<const horizon_command*>(cmd)) {
-			label += "HORIZON";
+		} else if(const auto cpcmd = dynamic_cast<const checkpoint_command*>(cmd)) {
+			label += fmt::format("CHECKPOINT");
 		} else {
 			return fmt::format("[{}] UNKNOWN\\n{}", cmd->get_cid(), cmd->debug_label);
 		}

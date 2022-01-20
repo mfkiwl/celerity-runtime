@@ -483,7 +483,7 @@ namespace detail {
 				const auto* current_horizon = task_manager_testspy::get_current_horizon_task(tm);
 				if(current_horizon != nullptr && current_horizon->get_id() > last_executed_horizon) {
 					last_executed_horizon = current_horizon->get_id();
-					tm.notify_horizon_executed(last_executed_horizon);
+					tm.notify_checkpoint_reached(last_executed_horizon, checkpoint_type::HORIZON);
 				}
 			}
 		}
@@ -532,6 +532,58 @@ namespace detail {
 
 		maybe_print_graph(tm);
 	}
+
+	TEST_CASE("barriers create appropriate dependencies to predecessors and successors", "[task_manager][task-graph][task-barrier]") {
+		task_manager tm{1, nullptr, nullptr};
+		test_utils::mock_buffer_factory mbf(&tm);
+
+		auto buf_a = mbf.create_buffer(range<1>(1));
+		const auto tid_a = test_utils::add_compute_task<class UKN(task_a)>(tm, [&](handler& cgh) { buf_a.get_access<access_mode::discard_write>(cgh, all{}); });
+
+		auto buf_b = mbf.create_buffer(range<1>(1));
+		const auto tid_b = test_utils::add_compute_task<class UKN(task_b)>(tm, [&](handler& cgh) { buf_b.get_access<access_mode::discard_write>(cgh, all{}); });
+
+		const auto tid_barrier = tm.create_barrier_task();
+
+		const auto tid_c = test_utils::add_compute_task<class UKN(task_c)>(tm, [&](handler& cgh) { buf_a.get_access<access_mode::read>(cgh, all{}); });
+		const auto tid_d = test_utils::add_compute_task<class UKN(task_d)>(tm, [&](handler& cgh) { buf_b.get_access<access_mode::discard_write>(cgh, all{}); });
+		const auto tid_e = test_utils::add_compute_task<class UKN(task_e)>(tm, [&](handler& cgh) {});
+		const auto tid_f = test_utils::add_compute_task<class UKN(task_f)>(tm, [&](handler& cgh) { buf_b.get_access<access_mode::read>(cgh, all{}); });
+		const auto tid_g = test_utils::add_compute_task<class UKN(task_g)>(tm, [&](handler& cgh) { buf_b.get_access<access_mode::discard_write>(cgh, all{}); });
+
+		CHECK(has_dependency(tm, tid_barrier, tid_a));
+		CHECK(has_dependency(tm, tid_barrier, tid_b));
+		CHECK(has_dependency(tm, tid_c, tid_barrier));
+		CHECK(!has_any_dependency(tm, tid_c, tid_a));
+		CHECK(has_dependency(tm, tid_d, tid_barrier));
+		CHECK(!has_any_dependency(tm, tid_d, tid_b));
+		CHECK(has_dependency(tm, tid_e, tid_barrier));
+		CHECK(has_dependency(tm, tid_f, tid_d));
+		CHECK(!has_any_dependency(tm, tid_f, tid_barrier));
+		CHECK(has_dependency(tm, tid_g, tid_f, dependency_kind::ANTI_DEP));
+		CHECK(has_dependency(tm, tid_g, tid_barrier)); // needs a TRUE_DEP on barrier since it only has ANTI_DEPs otherwise
+
+		maybe_print_graph(tm);
+	}
+
+
+	TEST_CASE("barriers reset the need for horizons", "[task_manager][task-graph][task-horizon]") {
+		task_manager tm{1, nullptr, nullptr};
+		tm.set_horizon_step(2);
+
+		// generate exactly two horizons
+		test_utils::mock_buffer_factory mbf(&tm);
+		auto buf = mbf.create_buffer(range<1>(1));
+		for(int i = 0; i < 3; ++i) {
+			test_utils::add_host_task(tm, on_master_node, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); });
+			tm.create_barrier_task();
+		}
+
+		CHECK(task_manager_testspy::get_num_horizons(tm) == 0);
+
+		maybe_print_graph(tm);
+	}
+
 
 } // namespace detail
 } // namespace celerity

@@ -19,7 +19,7 @@ namespace detail {
 	class graph_transformer;
 	class command_graph;
 	class abstract_command;
-	class horizon_command;
+	class task_command;
 
 	// TODO: Move to utility header..?
 	// Implementation from Boost.ContainerHash, licensed under the Boost Software License, Version 1.0.
@@ -69,6 +69,8 @@ namespace detail {
 			// Collective host tasks have an implicit dependency on the previous task in the same collective group, which is required in order to guarantee
 			// they are executed in the same order on every node.
 			std::unordered_map<collective_group_id, command_id> last_collective_commands;
+
+			command_id last_barrier{};
 		};
 
 	  public:
@@ -91,9 +93,9 @@ namespace detail {
 		command_graph& cdag;
 
 		// The most recent horizon command per node.
-		std::vector<horizon_command*> current_horizon_cmds;
+		std::vector<task_command*> current_checkpoint_cmds;
 		// The id for the next cleanup horizon (commands with ids lower than the cleanup horizon will be deleted next)
-		detail::command_id cleanup_horizon_id = 0;
+		detail::command_id cleanup_checkpoint_id = 0;
 
 		// NOTE: We have several data structures that keep track of the "global state" of the distributed program, across all tasks and nodes.
 		// While it might seem that this is problematic when the ordering of tasks can be chosen freely (by the scheduler),
@@ -119,7 +121,9 @@ namespace detail {
 
 		void process_task_data_requirements(task_id tid);
 
-		void generate_horizon(task_id tid);
+		void process_task_barrier_dependencies(task_id tid);
+
+		void generate_checkpoint(task_id tid, checkpoint_type type);
 	};
 
 } // namespace detail

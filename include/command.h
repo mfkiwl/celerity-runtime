@@ -10,8 +10,8 @@
 namespace celerity {
 namespace detail {
 
-	enum class command_type { NOP, HORIZON, EXECUTION, PUSH, AWAIT_PUSH, REDUCTION, SHUTDOWN, SYNC };
-	constexpr const char* command_string[] = {"NOP", "HORIZON", "EXECUTION", "PUSH", "AWAIT_PUSH", "REDUCTION", "SHUTDOWN", "SYNC"};
+	enum class command_type { NOP, CHECKPOINT, EXECUTION, PUSH, AWAIT_PUSH, REDUCTION, SHUTDOWN, SYNC };
+	constexpr const char* command_string[] = {"NOP", "CHECKPOINT", "EXECUTION", "PUSH", "AWAIT_PUSH", "REDUCTION", "SHUTDOWN", "SYNC"};
 
 	// ----------------------------------------------------------------------------------------------------------------
 	// ------------------------------------------------ COMMAND GRAPH -------------------------------------------------
@@ -118,9 +118,15 @@ namespace detail {
 		task_id tid;
 	};
 
-	class horizon_command final : public task_command {
+	class checkpoint_command final : public task_command {
 		friend class command_graph;
-		using task_command::task_command;
+		checkpoint_command(command_id cid, node_id nid, task_id tid, checkpoint_type type) : task_command(cid, nid, tid), type(type) {}
+
+	  public:
+		checkpoint_type get_checkpoint_type() const { return type; }
+
+	  private:
+		checkpoint_type type;
 	};
 
 	class execution_command final : public task_command {
@@ -148,8 +154,9 @@ namespace detail {
 
 	struct nop_data {};
 
-	struct horizon_data {
+	struct checkpoint_data {
 		task_id tid;
+		checkpoint_type type;
 	};
 
 	struct execution_data {
@@ -183,7 +190,7 @@ namespace detail {
 		uint64_t sync_id;
 	};
 
-	using command_data = std::variant<nop_data, horizon_data, execution_data, push_data, await_push_data, reduction_data, shutdown_data, sync_data>;
+	using command_data = std::variant<nop_data, checkpoint_data, execution_data, push_data, await_push_data, reduction_data, shutdown_data, sync_data>;
 
 	/**
 	 * A command package is what is actually transferred between nodes.

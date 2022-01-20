@@ -48,16 +48,17 @@ namespace detail {
 	}
 
 	// --------------------------------------------------------------------------------------------------------------------
-	// --------------------------------------------------- HORIZON --------------------------------------------------------
+	// --------------------------------------------------- CHECKPOINT --------------------------------------------------------
 	// --------------------------------------------------------------------------------------------------------------------
 
-	std::pair<celerity::detail::command_type, std::string> horizon_job::get_description(const command_pkg& pkg) {
-		return std::make_pair(command_type::HORIZON, "HORIZON");
+	std::pair<celerity::detail::command_type, std::string> checkpoint_job::get_description(const command_pkg& pkg) {
+		return std::make_pair(command_type::CHECKPOINT, "CHECKPOINT");
 	}
 
-	bool horizon_job::execute(const command_pkg& pkg, std::shared_ptr<logger> logger) {
-		const auto data = std::get<horizon_data>(pkg.data);
-		task_mngr.notify_horizon_executed(data.tid);
+	bool checkpoint_job::execute(const command_pkg& pkg, std::shared_ptr<logger> logger) {
+		const auto data = std::get<checkpoint_data>(pkg.data);
+		if(data.type == checkpoint_type::BARRIER) { MPI_Barrier(MPI_COMM_WORLD); }
+		task_mngr.notify_checkpoint_reached(data.tid, data.type);
 		return true;
 	};
 
