@@ -17,7 +17,7 @@ class handler;
 namespace detail {
 
 	enum class task_type {
-		NOP,
+		EPOCH,
 		HOST_COMPUTE,   ///< host task with explicit global size and celerity-defined split
 		DEVICE_COMPUTE, ///< device compute task
 		COLLECTIVE,     ///< host task with implicit 1d global size = #ranks and fixed split
@@ -94,7 +94,7 @@ namespace detail {
 
 		execution_target get_execution_target() const {
 			switch(type) {
-			case task_type::NOP: return execution_target::NONE;
+			case task_type::EPOCH: return execution_target::NONE;
 			case task_type::DEVICE_COMPUTE: return execution_target::DEVICE;
 			case task_type::HOST_COMPUTE:
 			case task_type::COLLECTIVE:
@@ -106,8 +106,8 @@ namespace detail {
 
 		const std::vector<reduction_id>& get_reductions() const { return reductions; }
 
-		static std::unique_ptr<task> make_nop(task_id tid) {
-			return std::unique_ptr<task>(new task(tid, task_type::NOP, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}));
+		static std::unique_ptr<task> make_epoch(task_id tid) {
+			return std::unique_ptr<task>(new task(tid, task_type::EPOCH, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}));
 		}
 
 		static std::unique_ptr<task> make_host_compute(task_id tid, int dimensions, cl::sycl::range<3> global_size, cl::sycl::id<3> global_offset,

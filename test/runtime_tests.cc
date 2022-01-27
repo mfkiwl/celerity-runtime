@@ -782,7 +782,7 @@ namespace detail {
 			// Resize it to 128 elements using a pure producer mode
 			buffer_for_each<size_t, 1, cl::sycl::access::mode::discard_write, class UKN(faux_overwrite)>(bid, tgt,
 			    {partial_overwrite == false ? size_t(128) : size_t(96)}, {partial_overwrite == false ? size_t(0) : size_t(32)},
-			    [](cl::sycl::id<1> idx, size_t& value) { /* NOP */ });
+			    [](cl::sycl::id<1> idx, size_t& value) { /* EPOCH */ });
 
 			// Verify that the original 64 elements have not been retained during the resizing (unless we did a partial overwrite)
 			{
@@ -866,7 +866,7 @@ namespace detail {
 
 			// Overwrite on this side (but not really) using a pure producer mode
 			buffer_for_each<size_t, 1, cl::sycl::access::mode::discard_write, class UKN(faux_overwrite)>(
-			    bid, tgt, {128}, {0}, [](cl::sycl::id<1> idx, size_t& value) { /* NOP */ });
+			    bid, tgt, {128}, {0}, [](cl::sycl::id<1> idx, size_t& value) { /* EPOCH */ });
 
 			// Verify that buffer does not have initialized contents
 			bool valid = buffer_reduce<size_t, 1, class UKN(check)>(bid, tgt, {128}, {0}, true,
@@ -890,9 +890,9 @@ namespace detail {
 
 			// Read buffer on this side at both ends (but not in between), forcing a resize without full replication
 			buffer_for_each<size_t, 1, cl::sycl::access::mode::read, class UKN(force_copy1)>(
-			    bid, tgt, {1}, {0}, [](cl::sycl::id<1> idx, size_t value) { /* NOP */ });
+			    bid, tgt, {1}, {0}, [](cl::sycl::id<1> idx, size_t value) { /* EPOCH */ });
 			buffer_for_each<size_t, 1, cl::sycl::access::mode::read, class UKN(force_copy2)>(
-			    bid, tgt, {1}, {127}, [](cl::sycl::id<1> idx, size_t value) { /* NOP */ });
+			    bid, tgt, {1}, {127}, [](cl::sycl::id<1> idx, size_t value) { /* EPOCH */ });
 
 			// Overwrite on this side using a pure producer mode, without requiring a resize
 			buffer_for_each<size_t, 1, cl::sycl::access::mode::discard_write, class UKN(overwrite)>(
@@ -1098,7 +1098,7 @@ namespace detail {
 
 			// Do a faux overwrite on this side to ensure that no coherence update will be done for the next call to buffer_reduce.
 			buffer_for_each<size_t, 2, cl::sycl::access::mode::discard_write, class UKN(faux_overwrite)>(
-			    bid, tgt, {128, 128}, {0, 0}, [](cl::sycl::id<2> idx, size_t& value) { /* NOP */ });
+			    bid, tgt, {128, 128}, {0, 0}, [](cl::sycl::id<2> idx, size_t& value) { /* EPOCH */ });
 
 			// While the backing buffer also includes the [0,0]-[64,64] region, this part should still be uninitialized.
 			{

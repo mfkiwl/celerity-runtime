@@ -60,9 +60,10 @@ namespace detail {
 		using buffer_writer_map = std::unordered_map<buffer_id, region_map<std::optional<command_id>>>;
 
 		struct per_node_data {
-			// An "init command" is used as the last writer for host-initialized buffers.
+			// The epoch command is used as the last writer for host-initialized buffers.
+			// To ensure correct ordering, all commands that have no other true-dependencies depend on this command.
 			// This is useful so we can correctly generate anti-dependencies onto commands that read host-initialized buffers.
-			command_id current_init_cid;
+			command_id current_epoch_cid;
 			// We store for each node which command last wrote to a buffer region. This includes both newly generated data (from a execution command),
 			// as well as already existing data that was pushed in from another node. This is used for determining anti-dependencies.
 			buffer_writer_map buffer_last_writer;

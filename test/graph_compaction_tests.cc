@@ -153,9 +153,10 @@ namespace detail {
 		// For this test, we need to generate 2 horizons but still have the first one be relevant
 		// after the second is generated -> use 2 buffers A and B, with a longer task chan on A, and write to B later
 		// step size is set to ensure expected horizons
-		ctx.get_task_manager().set_horizon_step(1);
+		ctx.get_task_manager().set_horizon_step(2);
 
 		auto& inspector = ctx.get_inspector();
+		auto& cdag = ctx.get_command_graph();
 		test_utils::mock_buffer_factory mbf(ctx);
 		auto full_range = cl::sycl::range<1>(100);
 		auto buf_a = mbf.create_buffer<1>(full_range);
@@ -178,8 +179,8 @@ namespace detail {
 
 		// here, the first horizon should have been generated
 
-		// do 1 more read/writes on buf_a to generate another horizon and apply the first one
-		for(int i = 0; i < 1; ++i) {
+		// do 3 more read/writes on buf_a to generate another horizon and apply the first one
+		for(int i = 0; i < 3; ++i) {
 			test_utils::build_and_flush(ctx, NUM_NODES,
 			    test_utils::add_compute_task<class UKN(buf_a_rw)>(
 			        ctx.get_task_manager(), [&](handler& cgh) { buf_a.get_access<mode::read_write>(cgh, one_to_one{}); }, full_range));
@@ -189,19 +190,30 @@ namespace detail {
 
 		auto write_b_after_first_horizon = test_utils::build_and_flush(ctx, NUM_NODES,
 		    test_utils::add_compute_task<class UKN(write_b_after_first_horizon)>(
-		        ctx.get_task_manager(), [&](handler& cgh) { buf_b.get_access<mode::discard_write>(cgh, one_to_one{}); }, full_range));
+		        ctx.get_task_manager(),
+		        [&](handler& cgh) {
+			        // introduce an artificial true dependency to avoid the fallback epoch dependency generated for ordering
+			        buf_a.get_access<mode::read>(cgh, one_to_one{});
+			        buf_b.get_access<mode::discard_write>(cgh, one_to_one{});
+		        },
+		        full_range));
 
 		// Now we need to check various graph properties
 
 		auto cmds = inspector.get_commands(write_b_after_first_horizon, {}, {});
 		CHECK(cmds.size() == 1);
 		auto deps = inspector.get_dependencies(*cmds.cbegin());
-		CHECK(deps.size() == 1);
+		CHECK(deps.size() == 2);
+
+		const auto buffer_a_dep = std::find_if(deps.begin(), deps.end(), [&](const command_id cid) { return isa<execution_command>(cdag.get(cid)); });
+		const auto horizon_dep = std::find_if(deps.begin(), deps.end(), [&](const command_id cid) { return isa<horizon_command>(cdag.get(cid)); });
+		REQUIRE(buffer_a_dep != deps.end());
+		REQUIRE(horizon_dep != deps.end());
 
 		// check that the dependee is the first horizon
 		auto horizon_cmds = inspector.get_commands({}, {}, command_type::HORIZON);
-		CHECK(horizon_cmds.size() == 3);
-		CHECK(deps[0] == *horizon_cmds.cbegin());
+		CHECK(horizon_cmds.size() == 2);
+		CHECK(*horizon_dep == *horizon_cmds.cbegin());
 
 		// and that it's an anti-dependence
 		auto write_b_cmd = ctx.get_command_graph().get(*cmds.cbegin());
@@ -278,7 +290,7 @@ namespace detail {
 			const auto cmds = inspector.get_commands(tid, std::nullopt, std::nullopt);
 			CHECK(cmds.size() == 2);
 			std::transform(cmds.begin(), cmds.end(), initial_last_writer_ids.begin(), [&](auto cid) {
-				// (Implementation detail: We can't use the inspector here b/c NOP commands are not flushed)
+				// (Implementation detail: We can't use the inspector here b/c EPOCH commands are not flushed)
 				const auto deps = ctx.get_command_graph().get(cid)->get_dependencies();
 				REQUIRE(std::distance(deps.begin(), deps.end()) == 1);
 				return deps.begin()->node->get_cid();
@@ -349,13 +361,14 @@ namespace detail {
 		auto& ggen = ctx.get_graph_generator();
 		test_utils::mock_buffer_factory mbf(&tm, &ggen);
 		auto buf = mbf.create_buffer(range<1>(1));
-		for(int i = 0; i < 5; ++i) {
+		for(int i = 0; i < 4; ++i) {
 			test_utils::build_and_flush(
 			    ctx, test_utils::add_host_task(tm, on_master_node, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
 		}
 
 		// This must depend on the first horizon, not first_collective
-		const auto second_collective = test_utils::build_and_flush(ctx, test_utils::add_host_task(tm, experimental::collective, [&](handler& cgh) {}));
+		const auto second_collective = test_utils::build_and_flush(
+		    ctx, test_utils::add_host_task(tm, experimental::collective, [&](handler& cgh) { buf.get_access<access_mode::read>(cgh, all{}); }));
 
 		const auto& inspector = ctx.get_inspector();
 		auto& cdag = ctx.get_command_graph();
@@ -365,12 +378,18 @@ namespace detail {
 			for(const auto first_cid : first_commands) {
 				CHECK(!inspector.has_dependency(second_cid, first_cid));
 			}
+
 			const auto second_deps = cdag.get(second_cid)->get_dependencies();
-			CHECK(std::distance(second_deps.begin(), second_deps.end()) == 1);
-			for(const auto& dep : second_deps) {
-				CHECK(dep.kind == dependency_kind::ORDER_DEP);
-				CHECK(dynamic_cast<const horizon_command*>(dep.node));
-			}
+			const auto master_node_dep =
+			    std::find_if(second_deps.begin(), second_deps.end(), [&](const abstract_command::dependency d) { return isa<execution_command>(d.node); });
+			const auto horizon_dep =
+			    std::find_if(second_deps.begin(), second_deps.end(), [&](const abstract_command::dependency d) { return isa<horizon_command>(d.node); });
+
+			CHECK(std::distance(second_deps.begin(), second_deps.end()) == 2);
+			REQUIRE(master_node_dep != second_deps.end());
+			CHECK(master_node_dep->kind == dependency_kind::TRUE_DEP);
+			REQUIRE(horizon_dep != second_deps.end());
+			CHECK(horizon_dep->kind == dependency_kind::ORDER_DEP);
 		}
 
 		maybe_print_graphs(ctx);
