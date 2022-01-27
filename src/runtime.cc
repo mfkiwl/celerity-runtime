@@ -186,7 +186,7 @@ namespace detail {
 
 		if(is_master_node() && graph_logger->get_level() == log_level::trace) {
 			task_mngr->print_graph(*graph_logger);
-			cdag->print_graph(*graph_logger);
+			cdag->print_graph(*graph_logger, *task_mngr);
 		}
 
 		// Shutting down the task_manager will cause all buffers captured inside command group functions to unregister.

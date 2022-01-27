@@ -8,14 +8,18 @@
 #include "command_graph.h"
 #include "grid.h"
 #include "logger.h"
+#include "task_manager.h"
 
 namespace celerity {
 namespace detail {
 
-	const char* dependency_style(dependency_kind kind) {
-		switch(kind) {
-		case dependency_kind::ORDER_DEP: return "color=blue"; break;
-		case dependency_kind::ANTI_DEP: return "color=limegreen"; break;
+	template <typename Dependency>
+	const char* dependency_style(const Dependency& dep) {
+		if(dep.kind == dependency_kind::ANTI_DEP) return "color=limegreen";
+		switch(dep.origin) {
+		case dependency_origin::collective_group_serialization: return "color=blue";
+		case dependency_origin::horizon_ordering: return "color=orange";
+		case dependency_origin::epoch_fallback: return "color=orchid";
 		default: return "";
 		}
 	}
@@ -32,7 +36,7 @@ namespace detail {
 		}
 	}
 
-	void print_graph(const std::unordered_map<task_id, std::unique_ptr<task>>& tdag, logger& graph_logger) {
+	void print_task_graph(const std::unordered_map<task_id, std::unique_ptr<task>>& tdag, logger& graph_logger) {
 		std::stringstream ss;
 		ss << "digraph G { ";
 
@@ -50,7 +54,7 @@ namespace detail {
 			ss << "];";
 
 			for(auto d : tsk->get_dependencies()) {
-				ss << fmt::format("{} -> {} [{}];", d.node->get_id(), tsk->get_id(), dependency_style(d.kind));
+				ss << fmt::format("{} -> {} [{}];", d.node->get_id(), tsk->get_id(), dependency_style(d));
 			}
 		}
 
@@ -85,7 +89,7 @@ namespace detail {
 		return label;
 	}
 
-	void print_graph(const command_graph& cdag, logger& graph_logger) {
+	void print_command_graph(const command_graph& cdag, logger& graph_logger, const task_manager& tm) {
 		std::stringstream main_ss;
 		std::unordered_map<task_id, std::stringstream> task_subgraph_ss;
 
@@ -109,8 +113,13 @@ namespace detail {
 			if(const auto tcmd = dynamic_cast<task_command*>(cmd)) {
 				// Add to subgraph as well
 				if(task_subgraph_ss.find(tcmd->get_tid()) == task_subgraph_ss.end()) {
-					// TODO: Can we print the task debug label here as well?
-					task_subgraph_ss[tcmd->get_tid()] << fmt::format("subgraph cluster_{} {{ label=\"Task {}\"; color=gray;", tcmd->get_tid(), tcmd->get_tid());
+					std::string task_label;
+					if(const auto tsk = tm.find_task(tcmd->get_tid())) {
+						task_label = get_task_label(tsk);
+					} else {
+						task_label = fmt::format("Task {} (deleted)", tcmd->get_tid());
+					}
+					task_subgraph_ss[tcmd->get_tid()] << fmt::format("subgraph cluster_{} {{ label=\"{}\"; color=gray;", tcmd->get_tid(), task_label);
 				}
 				write_vertex(task_subgraph_ss[tcmd->get_tid()], cmd);
 			} else {
@@ -118,7 +127,7 @@ namespace detail {
 			}
 
 			for(auto d : cmd->get_dependencies()) {
-				main_ss << fmt::format("{} -> {} [{}];", d.node->get_cid(), cmd->get_cid(), dependency_style(d.kind));
+				main_ss << fmt::format("{} -> {} [{}];", d.node->get_cid(), cmd->get_cid(), dependency_style(d));
 			}
 
 			// Add a dashed line to the corresponding PUSH

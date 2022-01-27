@@ -61,7 +61,7 @@ namespace detail {
 				auto cgid = tsk->get_collective_group_id();
 				auto& last_collective_commands = node_data.at(nid).last_collective_commands;
 				if(auto prev = last_collective_commands.find(cgid); prev != last_collective_commands.end()) {
-					cdag.add_dependency(cmd, cdag.get(prev->second), dependency_kind::ORDER_DEP);
+					cdag.add_dependency(cmd, cdag.get(prev->second), dependency_kind::TRUE_DEP, dependency_origin::collective_group_serialization);
 					last_collective_commands.erase(prev);
 				}
 				last_collective_commands.emplace(cgid, cmd->get_cid());
@@ -97,7 +97,8 @@ namespace detail {
 		for(const auto cmd : cdag.task_commands(tid)) {
 			if(const auto deps = cmd->get_dependencies();
 			    std::none_of(deps.begin(), deps.end(), [](const abstract_command::dependency d) { return d.kind == dependency_kind::TRUE_DEP; })) {
-				cdag.add_dependency(cmd, cdag.get(node_data.at(cmd->get_nid()).current_epoch_cid), dependency_kind::TRUE_DEP);
+				cdag.add_dependency(
+				    cmd, cdag.get(node_data.at(cmd->get_nid()).current_epoch_cid), dependency_kind::TRUE_DEP, dependency_origin::epoch_fallback);
 			}
 		}
 	}
@@ -143,14 +144,14 @@ namespace detail {
 				if(buffer_reads_it == command_reads.end()) continue; // The task might be a dependent because of another buffer
 				if(!GridRegion<3>::intersect(write_req, buffer_reads_it->second).empty()) {
 					has_dependents = true;
-					cdag.add_dependency(write_cmd, cmd, dependency_kind::ANTI_DEP);
+					cdag.add_dependency(write_cmd, cmd, dependency_kind::ANTI_DEP, dependency_origin::dataflow);
 				}
 			}
 
 			// In some cases (horizons, master node host task, weird discard_* constructs...)
 			// the last writer might not have any dependents. Just add the anti-dependency onto the writer itself then.
 			if(!has_dependents) {
-				cdag.add_dependency(write_cmd, last_writer_cmd, dependency_kind::ANTI_DEP);
+				cdag.add_dependency(write_cmd, last_writer_cmd, dependency_kind::ANTI_DEP, dependency_origin::dataflow);
 
 				// This is a good time to validate our assumption that every AWAIT_PUSH command has a dependent
 				assert(!isa<await_push_command>(last_writer_cmd));
@@ -164,7 +165,7 @@ namespace detail {
 			auto sources = map.get_region_values(box);
 			for(const auto& source : sources) {
 				auto source_cmd = cdag.get(*source.second);
-				cdag.add_dependency(cmd, source_cmd);
+				cdag.add_dependency(cmd, source_cmd, dependency_kind::TRUE_DEP, dependency_origin::dataflow);
 			}
 		}
 	} // namespace
@@ -343,7 +344,7 @@ namespace detail {
 								{
 									auto await_push_cmd = cdag.create<await_push_command>(nid, push_cmd);
 
-									cdag.add_dependency(cmd, await_push_cmd);
+									cdag.add_dependency(cmd, await_push_cmd, dependency_kind::TRUE_DEP, dependency_origin::dataflow);
 									generate_anti_dependencies(tid, bid, node_buffer_last_writer, box, await_push_cmd);
 
 									// Remember the fact that we now have this valid buffer range on this node.
@@ -391,11 +392,11 @@ namespace detail {
 							add_dependencies_for_box(cdag, push_cmd, node_data.at(source_nid).buffer_last_writer.at(bid), box);
 
 							auto await_push_cmd = cdag.create<await_push_command>(nid, push_cmd);
-							cdag.add_dependency(reduce_cmd, await_push_cmd);
+							cdag.add_dependency(reduce_cmd, await_push_cmd, dependency_kind::TRUE_DEP, dependency_origin::dataflow);
 						}
 					}
 
-					cdag.add_dependency(cmd, reduce_cmd);
+					cdag.add_dependency(cmd, reduce_cmd, dependency_kind::TRUE_DEP, dependency_origin::dataflow);
 
 					// Unless this task also writes the reduction buffer, the reduction command becomes the last writer
 					if(!std::any_of(required_modes.begin(), required_modes.end(), detail::access::mode_traits::is_producer)) {
@@ -473,7 +474,7 @@ namespace detail {
 						assert(isa<await_push_command>(writer_cmd));
 						continue;
 					}
-					cdag.add_dependency(writer_cmd, push_cmd, dependency_kind::ANTI_DEP);
+					cdag.add_dependency(writer_cmd, push_cmd, dependency_kind::ANTI_DEP, dependency_origin::dataflow);
 				}
 			}
 		}
@@ -487,7 +488,7 @@ namespace detail {
 			// Build horizon command and make current front depend on it
 			auto horizon_cmd = cdag.create<horizon_command>(node, tid);
 			for(const auto& front_cmd : previous_execution_front) {
-				cdag.add_dependency(horizon_cmd, front_cmd);
+				cdag.add_dependency(horizon_cmd, front_cmd, dependency_kind::TRUE_DEP, dependency_origin::horizon_ordering);
 			}
 			// Apply the previous horizon to data structures
 			auto* prev_horizon = current_horizon_cmds[node];

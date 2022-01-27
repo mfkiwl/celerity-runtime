@@ -13,6 +13,7 @@ namespace celerity {
 namespace detail {
 
 	class logger;
+	class task_manager;
 
 	// TODO: Could be extended (using SFINAE) to support additional iterator types (e.g. random access)
 	template <typename Iterator, typename PredicateFn>
@@ -124,13 +125,13 @@ namespace detail {
 
 		auto& task_commands(task_id tid) { return by_task.at(tid); }
 
-		void print_graph(logger& graph_logger) const;
+		void print_graph(logger& graph_logger, const task_manager& tm) const;
 
 		// TODO unify dependency terminology to this
-		void add_dependency(abstract_command* depender, abstract_command* dependee, dependency_kind kind = dependency_kind::TRUE_DEP) {
+		void add_dependency(abstract_command* depender, abstract_command* dependee, dependency_kind kind, dependency_origin origin) {
 			assert(depender->get_nid() == dependee->get_nid()); // We cannot depend on commands executed on another node!
 			assert(dependee != depender);
-			depender->add_dependency({dependee, kind});
+			depender->add_dependency({dependee, kind, origin});
 			execution_fronts[depender->get_nid()].erase(dependee);
 		}
 

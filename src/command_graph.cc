@@ -26,9 +26,9 @@ namespace detail {
 		}
 	}
 
-	void command_graph::print_graph(logger& graph_logger) const {
+	void command_graph::print_graph(logger& graph_logger, const task_manager& tm) const {
 		if(command_count() < 200) {
-			detail::print_graph(*this, graph_logger);
+			detail::print_command_graph(*this, graph_logger, tm);
 		} else {
 			graph_logger.warn("Command graph is very large ({} vertices). Skipping GraphViz output", command_count());
 		}

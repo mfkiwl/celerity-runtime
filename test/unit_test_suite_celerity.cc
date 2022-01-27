@@ -17,6 +17,6 @@ void test_run_ended_callback() {
 void maybe_print_graphs(celerity::test_utils::cdag_test_context& ctx) {
 	if(print_graphs) {
 		ctx.get_task_manager().print_graph(graph_logger);
-		ctx.get_command_graph().print_graph(graph_logger);
+		ctx.get_command_graph().print_graph(graph_logger, ctx.get_task_manager());
 	}
 }
