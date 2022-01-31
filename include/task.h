@@ -31,6 +31,12 @@ namespace detail {
 		DEVICE,
 	};
 
+	enum class epoch_action {
+		none,
+		barrier,
+		shutdown,
+	};
+
 	struct command_group_storage_base {
 		virtual void operator()(handler& cgh) const = 0;
 
@@ -106,36 +112,39 @@ namespace detail {
 
 		const std::vector<reduction_id>& get_reductions() const { return reductions; }
 
-		static std::unique_ptr<task> make_epoch(task_id tid) {
-			return std::unique_ptr<task>(new task(tid, task_type::EPOCH, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}));
+		epoch_action get_epoch_action() const { return epoch_action; }
+
+		static std::unique_ptr<task> make_epoch(task_id tid, detail::epoch_action action) {
+			return std::unique_ptr<task>(new task(tid, task_type::EPOCH, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}, action));
 		}
 
 		static std::unique_ptr<task> make_host_compute(task_id tid, int dimensions, cl::sycl::range<3> global_size, cl::sycl::id<3> global_offset,
 		    cl::sycl::range<3> granularity, std::unique_ptr<command_group_storage_base> cgf, buffer_access_map access_map,
 		    std::vector<reduction_id> reductions) {
 			return std::unique_ptr<task>(new task(tid, task_type::HOST_COMPUTE, {}, dimensions, global_size, global_offset, granularity, std::move(cgf),
-			    std::move(access_map), std::move(reductions), {}));
+			    std::move(access_map), std::move(reductions), {}, {}));
 		}
 
 		static std::unique_ptr<task> make_device_compute(task_id tid, int dimensions, cl::sycl::range<3> global_size, cl::sycl::id<3> global_offset,
 		    cl::sycl::range<3> granularity, std::unique_ptr<command_group_storage_base> cgf, buffer_access_map access_map, std::vector<reduction_id> reductions,
 		    std::string debug_name) {
 			return std::unique_ptr<task>(new task(tid, task_type::DEVICE_COMPUTE, {}, dimensions, global_size, global_offset, granularity, std::move(cgf),
-			    std::move(access_map), std::move(reductions), std::move(debug_name)));
+			    std::move(access_map), std::move(reductions), std::move(debug_name), {}));
 		}
 
 		static std::unique_ptr<task> make_collective(
 		    task_id tid, collective_group_id cgid, size_t num_collective_nodes, std::unique_ptr<command_group_storage_base> cgf, buffer_access_map access_map) {
 			return std::unique_ptr<task>(new task(tid, task_type::COLLECTIVE, cgid, 1, detail::range_cast<3>(cl::sycl::range<1>{num_collective_nodes}), {},
-			    {1, 1, 1}, std::move(cgf), std::move(access_map), {}, {}));
+			    {1, 1, 1}, std::move(cgf), std::move(access_map), {}, {}, {}));
 		}
 
 		static std::unique_ptr<task> make_master_node(task_id tid, std::unique_ptr<command_group_storage_base> cgf, buffer_access_map access_map) {
-			return std::unique_ptr<task>(new task(tid, task_type::MASTER_NODE, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, std::move(cgf), std::move(access_map), {}, {}));
+			return std::unique_ptr<task>(
+			    new task(tid, task_type::MASTER_NODE, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, std::move(cgf), std::move(access_map), {}, {}, {}));
 		}
 
 		static std::unique_ptr<task> make_horizon_task(task_id tid) {
-			return std::unique_ptr<task>(new task(tid, task_type::HORIZON, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}));
+			return std::unique_ptr<task>(new task(tid, task_type::HORIZON, {}, 0, {0, 0, 0}, {}, {1, 1, 1}, nullptr, {}, {}, {}, {}));
 		}
 
 	  private:
@@ -150,12 +159,14 @@ namespace detail {
 		buffer_access_map access_map;
 		std::vector<reduction_id> reductions;
 		std::string debug_name;
+		detail::epoch_action epoch_action;
 
 		task(task_id tid, task_type type, collective_group_id cgid, int dimensions, cl::sycl::range<3> global_size, cl::sycl::id<3> global_offset,
 		    cl::sycl::range<3> granularity, std::unique_ptr<command_group_storage_base> cgf, buffer_access_map access_map, std::vector<reduction_id> reductions,
-		    std::string debug_name)
+		    std::string debug_name, detail::epoch_action epoch_action)
 		    : tid(tid), type(type), cgid(cgid), dimensions(dimensions), global_size(global_size), global_offset(global_offset), granularity(granularity),
-		      cgf(std::move(cgf)), access_map(std::move(access_map)), reductions(std::move(reductions)), debug_name(std::move(debug_name)) {
+		      cgf(std::move(cgf)), access_map(std::move(access_map)), reductions(std::move(reductions)), debug_name(std::move(debug_name)),
+		      epoch_action(epoch_action) {
 			assert(type == task_type::HOST_COMPUTE || type == task_type::DEVICE_COMPUTE || granularity.size() == 1);
 		}
 	};

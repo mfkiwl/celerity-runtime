@@ -77,8 +77,11 @@ namespace detail {
 			assert(pkg.cmd == command_type::EPOCH);
 		}
 
+		epoch_action get_epoch_action() const { return action; }
+
 	  private:
 		task_manager& task_mngr;
+		epoch_action action;
 
 		bool execute(const command_pkg& pkg, std::shared_ptr<logger> logger) override;
 		std::pair<command_type, std::string> get_description(const command_pkg& pkg) override;

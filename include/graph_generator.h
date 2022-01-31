@@ -120,8 +120,8 @@ namespace detail {
 
 		void process_task_data_requirements(task_id tid);
 
-		template <typename TaskCommand>
-		TaskCommand* reduce_execution_front(task_id reducer_tid, node_id nid);
+		template <typename TaskCommand, typename... CtorParams>
+		TaskCommand* reduce_execution_front(task_id reducer_tid, node_id nid, CtorParams... args);
 
 		void apply_epoch(abstract_command* epoch);
 	};
