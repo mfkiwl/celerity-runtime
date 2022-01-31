@@ -116,6 +116,7 @@ namespace detail {
 					return false;
 				});
 			}
+
 			current_min_epoch_cid = new_min_epoch_cid;
 			return;
 		}
