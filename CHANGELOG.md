@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic
 Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2022-02-01
+
+### Added
+
+- Add support for ComputeCpp 2.7.0 and 2.8.0. (2831b2a)
+- Add support for using local memory with ComputeCpp. (8e2fce4)
+- Print Celerity version upon runtime startup. (0681c16)
+- Print warning when too few logical cores are available. (113e688)
+
+### Fixed
+
+- Fix race condition around reference-capture in matmul example. (76f49c9)
+
 ## [0.3.1] - 2022-01-04
 
 We recommend Clang >= 10.0 as the host compiler to avoid false-positive
