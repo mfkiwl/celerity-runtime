@@ -1470,17 +1470,6 @@ namespace detail {
 
 		test_utils::mock_buffer_factory mbf(&tm, &ggen);
 
-		const auto tid_a = test_utils::build_and_flush(ctx, num_nodes, test_utils::add_compute_task<class UKN(task_a)>(tm, [&](handler& cgh) {}));
-		const auto tid_b = test_utils::build_and_flush(ctx, num_nodes, test_utils::add_compute_task<class UKN(task_b)>(tm, [&](handler& cgh) {}));
-
-		const auto tid_epoch = test_utils::build_and_flush(ctx, num_nodes, tm.end_epoch(epoch_action::none));
-
-		auto buf = mbf.create_buffer(range<1>{1}, true /* host_initialized */);
-		const auto tid_c = test_utils::build_and_flush(
-		    ctx, num_nodes, test_utils::add_compute_task<class UKN(task_c)>(tm, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
-		const auto tid_d = test_utils::build_and_flush(
-		    ctx, num_nodes, test_utils::add_compute_task<class UKN(task_d)>(tm, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
-
 		auto& inspector = ctx.get_inspector();
 		auto& cdag = ctx.get_command_graph();
 
@@ -1490,24 +1479,41 @@ namespace detail {
 			return cdag.get(*set.begin());
 		};
 
+		const auto tid_a = test_utils::build_and_flush(ctx, num_nodes, test_utils::add_compute_task<class UKN(task_a)>(tm, [&](handler& cgh) {}));
+		const auto tid_b = test_utils::build_and_flush(ctx, num_nodes, test_utils::add_compute_task<class UKN(task_b)>(tm, [&](handler& cgh) {}));
+
+		const auto tid_epoch = test_utils::build_and_flush(ctx, num_nodes, tm.finish_epoch(epoch_action::none));
+
 		for(node_id nid = 0; nid < num_nodes; ++nid) {
 			CAPTURE(nid);
 
 			const auto cmd_a = get_single_command(tid_a, nid);
 			const auto a_deps = cmd_a->get_dependencies();
 			REQUIRE(std::distance(a_deps.begin(), a_deps.end()) == 1);
-			CHECK(a_deps.front().origin == dependency_origin::epoch_fallback);
+			CHECK(a_deps.front().origin == dependency_origin::current_epoch);
 
 			const auto cmd_b = get_single_command(tid_b, nid);
 			const auto b_deps = cmd_b->get_dependencies();
 			REQUIRE(std::distance(b_deps.begin(), b_deps.end()) == 1);
-			CHECK(b_deps.front().origin == dependency_origin::epoch_fallback);
+			CHECK(b_deps.front().origin == dependency_origin::current_epoch);
 
 			const auto cmd_barrier = get_single_command(tid_epoch, nid);
 			const auto barrier_deps = cmd_barrier->get_dependencies();
 			CHECK(std::distance(barrier_deps.begin(), barrier_deps.end()) == 2);
 			CHECK(inspector.has_dependency(cmd_barrier->get_cid(), cmd_a->get_cid()));
 			CHECK(inspector.has_dependency(cmd_barrier->get_cid(), cmd_b->get_cid()));
+		}
+
+		auto buf = mbf.create_buffer(range<1>{1}, true /* host_initialized */);
+		const auto tid_c = test_utils::build_and_flush(
+		    ctx, num_nodes, test_utils::add_compute_task<class UKN(task_c)>(tm, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
+		const auto tid_d = test_utils::build_and_flush(
+		    ctx, num_nodes, test_utils::add_compute_task<class UKN(task_d)>(tm, [&](handler& cgh) { buf.get_access<access_mode::discard_write>(cgh, all{}); }));
+
+		for(node_id nid = 0; nid < num_nodes; ++nid) {
+			CAPTURE(nid);
+
+			const auto cmd_barrier = get_single_command(tid_epoch, nid);
 
 			const auto cmd_c = get_single_command(tid_c, nid);
 			const auto c_deps = cmd_c->get_dependencies();

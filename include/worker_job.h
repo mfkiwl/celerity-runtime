@@ -73,7 +73,8 @@ namespace detail {
 
 	class epoch_job : public worker_job {
 	  public:
-		epoch_job(command_pkg pkg, std::shared_ptr<logger> job_logger, task_manager& tm) : worker_job(pkg, job_logger), task_mngr(tm) {
+		epoch_job(command_pkg pkg, std::shared_ptr<logger> job_logger, task_manager& tm)
+		    : worker_job(pkg, job_logger), task_mngr(tm), action(std::get<epoch_data>(pkg.data).action) {
 			assert(pkg.cmd == command_type::EPOCH);
 		}
 

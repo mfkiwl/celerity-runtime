@@ -18,8 +18,7 @@ deprecation warnings.
 - Properly apply horizons to collective host task order-dependencies. (4488724)
 - Avoid race between horizon task generation and horizon command execution.
   (f670868)
-- Fix data race in `task_manager::notify_horizon_executed` (only in debug
-  builds). (f641bcb)
+- Fix data race in `task_manager::notify_horizon_executed` (only in debug builds). (f641bcb)
 - Don't rely on static destruction order for `user_benchmarker`. (d1c9e51)
 - Restructure `wave_sim` example to avoid host side race condition for certain
   `--sample-rate` configurations. (d226b95)

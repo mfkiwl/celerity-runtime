@@ -52,11 +52,6 @@ namespace detail {
 		 */
 		void shutdown();
 
-		/**
-		 * @brief Get the id of the highest executed global sync operation.
-		 */
-		uint64_t get_highest_executed_sync_id() const noexcept;
-
 	  private:
 		node_id local_nid;
 		host_queue& h_queue;
@@ -69,7 +64,6 @@ namespace detail {
 		std::shared_ptr<logger> execution_logger;
 		std::thread exec_thrd;
 		size_t running_device_compute_jobs = 0;
-		std::atomic<uint64_t> highest_executed_sync_id = {0};
 
 		// Jobs are identified by the command id they're processing
 
@@ -88,8 +82,7 @@ namespace detail {
 		template <typename Job, typename... Args>
 		void create_job(const command_pkg& pkg, const std::vector<command_id>& dependencies, Args&&... args) {
 			auto logger = execution_logger->create_context({{"job", std::to_string(pkg.cid)}});
-			if(pkg.cmd == command_type::HORIZON) { logger = logger->create_context({{"task", std::to_string(std::get<horizon_data>(pkg.data).tid)}}); }
-			if(pkg.cmd == command_type::EXECUTION) { logger = logger->create_context({{"task", std::to_string(std::get<execution_data>(pkg.data).tid)}}); }
+			if(pkg.tid) { logger = logger->create_context({{"task", std::to_string(*pkg.tid)}}); }
 			jobs[pkg.cid] = {std::make_unique<Job>(pkg, logger, std::forward<Args>(args)...), pkg.cmd, {}, 0};
 
 			// If job doesn't exist we assume it has already completed.
