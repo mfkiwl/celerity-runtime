@@ -1,7 +1,6 @@
 #include "unit_test_suite_celerity.h"
 
 #include <limits>
-#include <sstream>
 
 namespace detail {
 void test_run_started_callback() {

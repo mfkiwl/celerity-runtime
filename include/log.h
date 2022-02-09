@@ -1,7 +1,5 @@
 #pragma once
 
-#include <ostream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -11,8 +9,8 @@
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #include <spdlog/spdlog.h>
 
+// Enable formatting of types that support operator<<(std::ostream&, T)
 #include <spdlog/fmt/ostr.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include "print_utils.h"
 
