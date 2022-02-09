@@ -36,7 +36,8 @@ namespace detail {
 		bool is_done() const { return done; }
 
 	  protected:
-		worker_job(command_pkg pkg, log_map ctx = {}) : pkg(pkg), lctx((ctx.insert({"job", pkg.cid}), ctx)) {}
+		template <typename... Es>
+		worker_job(command_pkg pkg, std::tuple<Es...> ctx = {}) : pkg(pkg), lctx(std::tuple_cat(std::make_tuple("job", pkg.cid), ctx)) {}
 
 	  private:
 		command_pkg pkg;
@@ -102,7 +103,7 @@ namespace detail {
 
 	class reduction_job : public worker_job {
 	  public:
-		reduction_job(command_pkg pkg, reduction_manager& rm) : worker_job(pkg, {{"rid", std::get<reduction_data>(pkg.data).rid}}), rm(rm) {
+		reduction_job(command_pkg pkg, reduction_manager& rm) : worker_job(pkg, std::make_tuple("rid", std::get<reduction_data>(pkg.data).rid)), rm(rm) {
 			assert(pkg.cmd == command_type::REDUCTION);
 		}
 
@@ -117,7 +118,7 @@ namespace detail {
 	class host_execute_job : public worker_job {
 	  public:
 		host_execute_job(command_pkg pkg, detail::host_queue& queue, detail::task_manager& tm, buffer_manager& bm)
-		    : worker_job(pkg, {{"tid", std::get<task_data>(pkg.data).tid}}), queue(queue), task_mngr(tm), buffer_mngr(bm) {
+		    : worker_job(pkg, std::make_tuple("tid", std::get<task_data>(pkg.data).tid)), queue(queue), task_mngr(tm), buffer_mngr(bm) {
 			assert(pkg.cmd == command_type::TASK);
 		}
 
@@ -139,7 +140,7 @@ namespace detail {
 	class device_execute_job : public worker_job {
 	  public:
 		device_execute_job(command_pkg pkg, detail::device_queue& queue, detail::task_manager& tm, buffer_manager& bm, reduction_manager& rm, node_id local_nid)
-		    : worker_job(pkg, {{"tid", std::get<task_data>(pkg.data).tid}}), queue(queue), task_mngr(tm), buffer_mngr(bm), reduction_mngr(rm),
+		    : worker_job(pkg, std::make_tuple("tid", std::get<task_data>(pkg.data).tid)), queue(queue), task_mngr(tm), buffer_mngr(bm), reduction_mngr(rm),
 		      local_nid(local_nid) {
 			assert(pkg.cmd == command_type::TASK);
 		}
